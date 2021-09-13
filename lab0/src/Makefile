@@ -1,4 +1,6 @@
+CC := gcc
+
 .PHONY: all
 
 all: fibo.c
-	gcc fibo.c -o fibo
+	$(CC) fibo.c -o fibo
