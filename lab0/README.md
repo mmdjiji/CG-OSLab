@@ -233,10 +233,12 @@ int main () {
 
 ### 编写Makefile
 ```makefile
+CC := gcc
+
 .PHONY: all
 
 all: fibo.c
-	gcc fibo.c -o fibo
+	$(CC) fibo.c -o fibo
 ```
 
 ### 编写hello_os.sh
@@ -251,7 +253,7 @@ sed -n 1024p $1 >> $2
 
 ### 复制src到dst
 ```bash
-cp src/* dst/ -rf
+cp src/* dst/ -r
 ```
 
 ### 上传提交代码
