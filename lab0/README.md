@@ -255,10 +255,9 @@ cp src/* dst/ -rf
 ```
 
 ### 上传提交代码
-
-```sh
+```bash
 git add .
-git commit -m "Initial commit"
+git commit -m "Finish lab0"
 git push
 ```
 得到以下内容:

@@ -3,6 +3,8 @@
 ## Exercise 1.1
 将 `CROSS_COMPILE` 变量从 `bin/mips_4KC-` 修改为 `/opt/eldk/usr/bin/mips_4KC-` 即可。
 
+> 需要注意的是，虽然本地修改为上述路径即可正常编译，但在评测系统上需要改成 `/OSLAB/compiler/usr/bin/mips_4KC-` 才能正常编译，因为远程环境与本地环境不一致。
+
 ```makefile
 # Common includes in Makefile
 #
@@ -298,8 +300,7 @@ ELF Header:
 ```
 
 ## Thinking 1.2
-`main` 函数在 `init/main.c` 文件中，经过编译链接后，
-
+`main` 函数在 `init/main.c` 文件中，经过编译链接后，形成了一个整体，用 `j` 指令跳转到 `main` 函数即可。
 
 ## Exercise 1.4
 根据 `incldue/mmu.h` 中的提示，栈顶地址为 `0x80400000` ，因此只需将栈顶设置过去，然后使用 `j` 指令跳转到 `main` 就行了。
@@ -337,3 +338,67 @@ tart ...
 ```
 
 ## Exercise 1.5
+补全扫描 `%` 相关逻辑:
+```c++
+    for(;;) {
+  {
+      /* scan for the next '%' */
+      while(*fmt && *fmt != '%') {
+        OUTPUT(arg, fmt, 1);
+        ++fmt;
+      }
+      /* flush the string found so far */
+
+      /* are we hitting the end? */
+      if(!*fmt) break;
+  }
+
+  /* we found a '%' */
+  ++fmt;
+  
+  /* check for long */
+  if(*fmt == 'l') {
+    longFlag = 1;
+    ++fmt;
+  }
+
+  /* check for other prefixes */
+```
+运行测试如下:
+```bash
+$ gxemul -E testmips -C R3000 -M 64 gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.128.254
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c: main is start ...
+
+init.c: mips_init() is called
+
+panic at init.c:24: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+GXemul> quit
+```
+
+### 上传提交代码
+```bash
+git add .
+git commit -m "Finish lab1"
+git push
+```
+得到以下内容:
+```
+remote: [ Congratulations! You have passed the current lab. ]
+```
+![result](assets/result.png)
