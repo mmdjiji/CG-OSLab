@@ -58,3 +58,96 @@ x是一个虚拟地址。
 ```
 
 ## Thinking 2.5
+内存页存储于物理内存，也就是内存颗粒中。
+
+在 `pmap.h` 中有 `page2pa` 函数用来获取给定页的内存地址:
+```c++
+/* Get the physical address of Page 'pp'.
+ */
+static inline u_long
+page2pa(struct Page *pp)
+{
+	return page2ppn(pp) << PGSHIFT;
+}
+```
+
+## Thinking 2.6
+`pmap.h` 中对 `Page_list` 最初的引用:
+```c++
+LIST_HEAD(Page_list, Page);
+```
+`queue.h` 中有对 `LIST_HEAD` 宏的定义:
+```c++
+#define LIST_HEAD(name, type)                                           \
+        struct name {                                                           \
+                struct type *lh_first;  /* first element */                     \
+        }
+```
+展开得:
+```c++
+struct Page_list {
+  struct Page *lh_first;
+}
+```
+在 `pmap.h` 中存在对 `Page` 的定义:
+```c++
+typedef LIST_ENTRY(Page) Page_LIST_entry_t;
+
+struct Page {
+	Page_LIST_entry_t pp_link;	/* free list link */
+
+	// Ref is the count of pointers (usually in page table entries)
+	// to this page.  This only holds for pages allocated using
+	// page_alloc.  Pages allocated at boot time using pmap.c's "alloc"
+	// do not have valid reference count fields.
+
+	u_short pp_ref;
+};
+```
+在 `queue.h` 中找到 `LIST_ENTRY` 宏的定义:
+```c++
+#define LIST_ENTRY(type)                                                \
+        struct {                                                                \
+                struct type *le_next;   /* next element */                      \
+                struct type **le_prev;  /* address of previous next element */  \
+        }
+```
+展开得:
+```c++
+struct Page_list {
+  struct {
+    struct {
+      struct Page *le_next;
+      struct Page **le_prev;
+    } pp_link;
+    u_short pp_ref;
+  } *lh_first;
+};
+```
+因此选择选项C。
+
+## Exercise 2.2
+```c++
+/* These variables are set by mips_detect_memory() */
+u_long maxpa;            /* Maximum physical address */
+u_long npage;            /* Amount of memory(in pages) */
+u_long basemem;          /* Amount of base memory(in bytes) */
+u_long extmem;           /* Amount of extended memory(in bytes) */
+```
+
+* 根据提示 `Set basemem to be 64MB, and calculate corresponding npage value.` 知需设置 `basemem` 为 `64MB` 。
+* `npage` 物理页数，为 `maxpa` 除以页大小，由于此前已经描述过本次实验的页大小为 `4KB` ，此处就是 `maxpa / (4 * 1024)` 。
+* `maxpa` 是最大物理地址，此处与 `basemem` 相等。
+* `extmem` 是扩展内存，此处为 `0` 。
+
+修改 `pmap.c` 如下:
+```c++
+/* Step 1: Initialize basemem.
+  * (When use real computer, CMOS tells us how many kilobytes there are). */
+basemem = 64 * 1024 * 1024; // 64MB
+maxpa = basemem;
+npage = maxpa / (4 * 1024);
+extmem = 0;
+```
+
+## Thinking 2.7
