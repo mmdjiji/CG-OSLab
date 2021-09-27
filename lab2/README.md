@@ -316,3 +316,287 @@ make: *** [vmlinux] Error 1
 不要慌，尝试 `make clean` 再 `make` ，可能是更改未充分被重新构建导致的。
 
 ## Thinking 2.8
+不难算出 `0xC0000000` 这一地址对应的是第 `(0xC0000000 >> 12)` 个页表项，这个页表项也就是第一个页目录项。一个页表项32位，占用4个字节的内存，因此，其相对于页表起始地址 `0xC0000000` 的偏移为 `(0xC0000000 >> 12) * 4 = 0x00300000` ，于是得到地址为 `0xC0000000 + 0x00300000 = 0xC0300000` 。
+
+## Exercise 2.5
+`boot_pgdir_walk`:
+```c++
+/* Overview:
+ 	Get the page table entry for virtual address `va` in the given
+ 	page directory `pgdir`.
+	If the page table is not exist and the parameter `create` is set to 1,
+	then create it.*/
+static Pte *boot_pgdir_walk(Pde *pgdir, u_long va, int create)
+{
+
+    Pde *pgdir_entryp;
+    Pte *pgtable, *pgtable_entry;
+
+    /* Step 1: Get the corresponding page directory entry and page table. */
+    /* Hint: Use KADDR and PTE_ADDR to get the page table from page directory
+     * entry value. */
+    pgdir_entryp = &pgdir[PDX(va)];
+
+    /* Step 2: If the corresponding page table is not exist and parameter `create`
+     * is set, create one. And set the correct permission bits for this new page
+     * table. */
+    if(!(*pgdir_entryp & PTE_V) && create == 1) {
+      *pgdir_entryp = PADDR((Pte)alloc(BY2PG, BY2PG, 1) | PTE_V);
+    }
+
+    /* Step 3: Get the page table entry for `va`, and return it. */
+    pgtable = (Pte)KADDR((PTE_ADDR(*pgdir_entryp)));
+    pgtable_entry = &pgtable[PTX(va)];
+    return pgtable_entry;
+}
+```
+`pgdir_walk`:
+```c++
+/*Overview:
+ 	Given `pgdir`, a pointer to a page directory, pgdir_walk returns a pointer
+ 	to the page table entry (with permission PTE_R|PTE_V) for virtual address 'va'.
+
+  Pre-Condition:
+	The `pgdir` should be two-level page table structure.
+
+  Post-Condition:
+ 	If we're out of memory, return -E_NO_MEM.
+	Else, we get the page table entry successfully, store the value of page table
+	entry to *ppte, and return 0, indicating success.
+
+  Hint:
+	We use a two-level pointer to store page table entry and return a state code to indicate
+	whether this function execute successfully or not.
+    This function have something in common with function `boot_pgdir_walk`.*/
+int
+pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte)
+{
+    Pde *pgdir_entryp;
+    Pte *pgtable;
+    struct Page *ppage;
+
+    /* Step 1: Get the corresponding page directory entry and page table. */
+    pgdir_entryp = &pgdir[PDX(va)];
+
+    /* Step 2: If the corresponding page table is not exist(valid) and parameter `create`
+     * is set, create one. And set the correct permission bits for this new page
+     * table.
+     * When creating new page table, maybe out of memory. */
+    if(!(*pgdir_entryp & PTE_V) && create == 1) {
+      if(page_alloc(&ppage) == -E_NO_MEM) return -E_NO_MEM;
+      *pgdir_entryp = page2pa(ppage) | PTE_V | PTE_R;
+      ppage->pp_ref = 1;
+    }
+
+    /* Step 3: Set the page table entry to `*ppte` as return value. */
+    pgtable = (Pte*)KADDR(PTE_ADDR(*pgdir_entryp));
+    Pte *pgtable_entry = &pgtable[PTX(va)];
+    *ppte = pgtable_entry;
+
+    return 0;
+}
+```
+
+## Exercise 2.6
+`boot_map_segment`:
+```c++
+/*Overview:
+ 	Map [va, va+size) of virtual address space to physical [pa, pa+size) in the page
+	table rooted at pgdir.
+	Use permission bits `perm|PTE_V` for the entries.
+ 	Use permission bits `perm` for the entries.
+
+  Pre-Condition:
+	Size is a multiple of BY2PG.*/
+void boot_map_segment(Pde *pgdir, u_long va, u_long size, u_long pa, int perm)
+{
+    int i, va_temp;
+    Pte *pgtable_entry;
+
+    /* Step 1: Check if `size` is a multiple of BY2PG. */
+    assert(size % BY2PG == 0);
+
+    /* Step 2: Map virtual address space to physical address. */
+    /* Hint: Use `boot_pgdir_walk` to get the page table entry of virtual address `va`. */
+    for(i = 0; i < size; i += BY2PG) {
+      va_temp = va + i;
+      pgtable_entry = boot_pgdir_walk(pgdir, va_temp, 1);
+      *pgtable_entry = (pa + i) | perm;
+    }
+}
+```
+
+## Exercise 2.7
+`page_insert`:
+```c++
+/*Overview:
+ 	Map the physical page 'pp' at virtual address 'va'.
+ 	The permissions (the low 12 bits) of the page table entry should be set to 'perm|PTE_V'.
+
+  Post-Condition:
+    Return 0 on success
+    Return -E_NO_MEM, if page table couldn't be allocated
+
+  Hint:
+	If there is already a page mapped at `va`, call page_remove() to release this mapping.
+	The `pp_ref` should be incremented if the insertion succeeds.*/
+int
+page_insert(Pde *pgdir, struct Page *pp, u_long va, u_int perm)
+{
+    u_int PERM;
+    Pte *pgtable_entry;
+    PERM = perm | PTE_V;
+
+    /* Step 1: Get corresponding page table entry. */
+    pgdir_walk(pgdir, va, 0, &pgtable_entry);
+
+    if (pgtable_entry != 0 && (*pgtable_entry & PTE_V) != 0) {
+        if (pa2page(*pgtable_entry) != pp) {
+            page_remove(pgdir, va);
+        } else	{
+            tlb_invalidate(pgdir, va);
+            *pgtable_entry = (page2pa(pp) | PERM);
+            return 0;
+        }
+    }
+
+    /* Step 2: Update TLB. */
+    /* hint: use tlb_invalidate function */
+    *pgtable_entry = 0;
+    tlb_invalidate(pgdir, va);
+
+    /* Step 3: Do check, re-get page table entry to validate the insertion. */
+    /* Step 3.1 Check if the page can be insert, if can’t return -E_NO_MEM */
+    if (pgdir_walk(pgdir, va, 1, &pgtable_entry) != 0) {
+      return -E_NO_MEM;
+    }
+    *pgtable_entry = page2pa(pp) | PERM;
+
+    /* Step 3.2 Insert page and increment the pp_ref */
+    ++pp->pp_ref;
+
+    return 0;
+}
+```
+
+## Thinking 2.9
+### 流程解释
+```asm
+mfc0	k1,CP0_ENTRYHI // 保护寄存器CP0_ENTRYHI
+mtc0	a0,CP0_ENTRYHI // 把a0放入寄存器CP0_ENTRYHI
+nop
+tlbp // 查找TLB是否有CP0_ENTRYHI寄存器匹配项，如有则放到CP0_INDEX里，没有则置CP0_INDEX最高位为1
+nop
+nop
+nop
+nop
+mfc0	k0,CP0_INDEX // 把CP0_INDEX运到k0
+bltz	k0,NOFOUND // 判断CP0_INDEX是不是小于0（也就是判断其最高位是否为1），如果为1跳NOFOUND
+nop
+```
+
+### 查询MIPS手册
+`tlbp` 指令的作用是寻找TLB中的匹配项:
+![tlbp](assets/tlbp.png)
+
+`tlbwi` 指令的作用是从立即数寄存器写TLB:
+![tlbwi](assets/tlbwi.png)
+
+### 为何4个nop指令
+关于为何有4个nop指令，考虑可能是防止流水线CPU的冒险，人为地插入了bubble。
+
+## Exercise 2.7
+完成 `tlb_out` 函数:
+```asm
+#include <asm/regdef.h>
+#include <asm/cp0regdef.h>
+#include <asm/asm.h>
+
+LEAF(tlb_out)
+//1: j 1b
+nop
+	mfc0	k1,CP0_ENTRYHI
+	mtc0	a0,CP0_ENTRYHI
+	nop
+	tlbp
+	nop
+	nop
+	nop
+	nop
+	mfc0	k0,CP0_INDEX
+	bltz	k0,NOFOUND
+	nop
+	mtc0	zero,CP0_ENTRYHI
+	mtc0	zero,CP0_ENTRYLO0
+	nop
+	tlbwi
+NOFOUND:
+
+	mtc0	k1,CP0_ENTRYHI
+	
+	j	ra
+	nop
+END(tlb_out)
+```
+完成之后，重新 `make` ，执行测试如下:
+```bash
+$ gxemul -E testmips -C R3000 -M 64 gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.128.254
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c: main is start ...
+
+init.c: mips_init() is called
+
+Physical memory: 65536K available, base = 65536K, extended = 0K
+
+to memory 80401000 for struct page directory.
+
+to memory 80431000 for struct Pages.
+
+pmap.c:  mips vm init success
+
+va2pa(boot_pgdir, 0x0) is 3ffe000
+
+page2pa(pp1) is 3ffe000
+
+start page_insert
+
+pp2->pp_ref 0
+
+end page_insert
+
+page_check() succeeded!
+
+panic at init.c:19: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+```
+
+### 上传提交代码
+```bash
+git add .
+git commit -m "Finish lab2"
+git push
+```
+得到以下内容:
+```
+remote: [ Congratulations! You have passed the current lab. ]
+```
+![result](assets/result.png)
+
+## Thinking 2.10
+因为 `va` 的地址不是页面积的整数倍，而在 `va2pa` 的过程中，会被强制转化为物理页面的起始地址。低 `12` 位清零。所以在执行 `va = 0x88888` 的过程中，并没有把这个值赋到 `pa` 所在的位置，所以 `pa` 的值仍然是 `0` 。
+
+## Thinking 2.11
+`PSE` 开启时直接用连续的 `4MB` 储存 `1024` 个页表，通过高十位找到对应页表，再用接下来 `10` 位页表索引找到具体的物理页面。
