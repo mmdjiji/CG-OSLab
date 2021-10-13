@@ -129,44 +129,41 @@ env_setup_vm(struct Env *e)
 	struct Page *p = NULL;
 	Pde *pgdir;
 
-	/*Step 1: Allocate a page for the page directory using a function you completed in the lab2.
-       * and add its reference.
-       *pgdir is the page directory of Env e, assign value for it. */
-    if (      ) {/* Todo here*/
-                panic("env_setup_vm - page alloc error\n");
-                return r;
-        }
+  /*Step 1: Allocate a page for the page directory using a function you completed in the lab2.
+    * and add its reference.
+    *pgdir is the page directory of Env e, assign value for it. */
+  if ((r = page_alloc(&p)) < 0) {/* Todo here*/
+    panic("env_setup_vm - page alloc error\n");
+    return r;
+  }
 
+  /*Step 2: Zero pgdir's field before UTOP. */
+  for(i = 0; i < PDX(UTOP); ++i) {
+    pgdir[i] = 0;
+  }
 
+  /*Step 3: Copy kernel's boot_pgdir to pgdir. */
+  for(i = PDX(UTOP); i <= PDX(~0); ++i) {
+    if(i != PDX(VPT) && i != PDX(UVPT)) { // except VPT and UVPT
+      pgdir[i] = boot_pgdir[i];
+    }
+  }
 
-    /*Step 2: Zero pgdir's field before UTOP. */
+  /* Hint:
+    *  The VA space of all envs is identical above UTOP
+    *  (except at VPT and UVPT, which we've set below).
+    *  See ./include/mmu.h for layout.
+    *  Can you use boot_pgdir as a template?
+    */
 
+  /*Step 4: Set e->env_pgdir and e->env_cr3 accordingly. */
+  e->env_pgdir = pgdir;
+  e->env_cr3 = PADDR(pgdir);
 
-
-
-
-    /*Step 3: Copy kernel's boot_pgdir to pgdir. */
-
-    /* Hint:
-     *  The VA space of all envs is identical above UTOP
-     *  (except at VPT and UVPT, which we've set below).
-     *  See ./include/mmu.h for layout.
-     *  Can you use boot_pgdir as a template?
-     */
-
-
-
-
-
-    /*Step 4: Set e->env_pgdir and e->env_cr3 accordingly. */
-
-
-
-
-    /*VPT and UVPT map the env's own page table, with
- *      *different permissions. */
+  /*VPT and UVPT map the env's own page table, with
+   *different permissions. */
 	e->env_pgdir[PDX(VPT)]   = e->env_cr3;
-    	e->env_pgdir[PDX(UVPT)]  = e->env_cr3 | PTE_V | PTE_R;
+  e->env_pgdir[PDX(UVPT)]  = e->env_cr3 | PTE_V | PTE_R;
 	return 0;
 }
 
