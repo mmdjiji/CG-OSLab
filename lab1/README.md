@@ -51,6 +51,7 @@ make[1]: Leaving directory '/home/jovyan/work/1191002009-lab/lib'
 ```
 
 ## Exercise 1.2
+![readelf](assets/readelf.png)
 ```c++
 // get section table addr, section header number and section header size.
 ptr_sh_table = binary + ehdr->e_shoff;
@@ -338,6 +339,8 @@ tart ...
 ```
 
 ## Exercise 1.5
+![print](assets/print.png)
+
 补全扫描 `%` 相关逻辑:
 ```c++
     for(;;) {
