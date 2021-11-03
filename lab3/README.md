@@ -156,3 +156,47 @@ env_setup_vm(struct Env *e)
 所有的物理地址都需要通过页表查询，每个进程的虚拟地址是相互隔离的，当进程切换时，虽然实际用的物理空间可能相同，但是通过页表的映射，让虚拟空间具有独立性，进程之间不会相互影响。
 
 ## Exercise 3.5
+```c++
+int
+env_alloc(struct Env **new, u_int parent_id)
+{
+	int r;
+	struct Env *e;
+    
+    /*Step 1: Get a new Env from env_free_list*/
+    if(LIST_EMPTY(&env_free_list)) {
+      *new = NULL;
+      return -E_NO_FREE_ENV;
+    }
+    e = LIST_FIRST(&env_free_list);
+    
+    /*Step 2: Call certain function(has been implemented) to init kernel memory layout for this new Env.
+     *The function mainly maps the kernel address to this new Env address. */
+    r = env_setup_vm(e);
+    if(r < 0) return r;
+
+    /*Step 3: Initialize every field of new Env with appropriate values*/
+    e->env_id = mkenvid(e);
+    e->env_parent_id = parent_id;
+    e->env_status = ENV_RUNNABLE;
+
+    /*Step 4: focus on initializing env_tf structure, located at this new Env. 
+     * especially the sp register,CPU status. */
+    e->env_tf.cp0_status = 0x10001004;
+    e->env_tf.regs[29] = USTACKTOP;
+
+    /*Step 5: Remove the new Env from Env free list*/
+    LIST_REMOVE(e, env_link);
+
+    *new = e;
+    return 0;
+}
+```
+
+## Thinking 3.4
+`user_data` 是将来创建进程后的进程控制块(PCB)指针，显然没有这个参数就不行。
+
+我认为这种设计就非常类似于 `int scanf(const char *__format, ...)` 的 `va_list` 内的参数，在调用前挖个坑分配好空间，在调用时对里面的内容进行操作，本来是要返回给用户的，但却无需显式返回。
+
+## Exercise 3.6
+
