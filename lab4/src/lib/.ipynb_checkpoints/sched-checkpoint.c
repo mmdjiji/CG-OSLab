@@ -33,5 +33,5 @@ void sched_yield(void)
     env_run(next_env);
   }
   env_run(curenv);
-  panic("sched yield reached end");
+  panic("sched yield reached end. ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
 }

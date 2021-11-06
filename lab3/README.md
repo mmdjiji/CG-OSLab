@@ -29,9 +29,9 @@ for(i=NENV-1; i>=0; --i) {
 ```c++
 int envid2env(u_int envid, struct Env **penv, int checkperm)
 {
-        struct Env *e;
+    struct Env *e;
     /* Hint:
- *      *  If envid is zero, return the current environment.*/
+     * If envid is zero, return the current environment.*/
     /*Step 1: Assign value to e using envid. */
     if(envid == 0) {
       *penv = curenv;
@@ -45,13 +45,13 @@ int envid2env(u_int envid, struct Env **penv, int checkperm)
       return -E_BAD_ENV;
     }
     /* Hint:
- *      *  Check that the calling environment has legitimate permissions
- *           *  to manipulate the specified environment.
- *                *  If checkperm is set, the specified environment
- *                     *  must be either the current environment.
- *                          *  or an immediate child of the current environment.If not, error! */
+     * Check that the calling environment has legitimate permissions
+     * to manipulate the specified environment.
+     * If checkperm is set, the specified environment
+     * must be either the current environment.
+     * or an immediate child of the current environment.If not, error! */
+    
     /*Step 2: Make a check according to checkperm. */
-
     if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
       *penv = 0;
       return -E_BAD_ENV;
@@ -68,10 +68,10 @@ u_int mkenvid(struct Env *e)
 {
 	static u_long next_env_id = 0;
 
-    /*Hint: lower bits of envid hold e's position in the envs array. */
+  /*Hint: lower bits of envid hold e's position in the envs array. */
 	u_int idx = e - envs;
 
-    /*Hint:  high bits of envid hold an increasing number. */
+  /*Hint:  high bits of envid hold an increasing number. */
 	return (++next_env_id << (1 + LOG2NENV)) | idx;
 }
 ```
@@ -89,8 +89,8 @@ env_setup_vm(struct Env *e)
 	Pde *pgdir;
 
   /*Step 1: Allocate a page for the page directory using a function you completed in the lab2.
-    * and add its reference.
-    *pgdir is the page directory of Env e, assign value for it. */
+   * and add its reference.
+   *pgdir is the page directory of Env e, assign value for it. */
   if ((r = page_alloc(&p)) < 0) { /* Todo here*/
     panic("env_setup_vm - page alloc error\n");
     return r;
@@ -448,7 +448,7 @@ env_destroy(struct Env *e)
 ```
 
 在 `stackframe.h` 中有一段 `get_sp` 函数可以获取栈顶的值，这里的地址是 `0x82000000` ，与 `TIMESTACK` 一致。
-```asm
+```S
 .macro get_sp
 	mfc0	k1, CP0_CAUSE
 	andi	k1, 0x107C
@@ -582,3 +582,235 @@ panic at env.c:505: assertion failed: pe0->env_id == 2048
 
 这里很神奇的是，到 `panic at init.c:28` 为止都是正常的，但是随后好像又执行了一个额外的 `mips_init()` 。我把 `panic` 提到 `kclock_init();` 前，额外的输出就没有了，而阅读指导书后文发现是有关 `kclock.c` 的内容，因此认为这里的 `failed` 在当前实验是正常的，需要等之后解决完中断与异常再来进行测试。
 
+## Exercise 3.11
+源文件是写好的，无需修改:
+```S
+.section .text.exc_vec3
+NESTED(except_vec3, 0, sp)
+  .set  noat
+  .set  noreorder
+  /*
+   * Register saving is delayed as long as we don't know
+   * which registers really need to be saved.
+   */
+1:  //j  1b
+  nop
+
+  mfc0  k1,CP0_CAUSE
+  la  k0,exception_handlers
+  /*
+   * Next lines assumes that the used CPU type has max.
+   * 32 different types of exceptions. We might use this
+   * to implement software exceptions in the future.
+   */
+
+  andi  k1,0x7c
+  addu  k0,k1
+  lw  k0,(k0)
+  NOP
+  jr  k0
+  nop
+END(except_vec3)
+  .set  at
+```
+
+## Exercise 3.12
+```lds
+. = 0x80000080;
+.except_vec3 : {
+  *(.text.exc_vec3)
+}
+```
+补上lds文件后我又测试运行了一下，这次就不会执行额外的代码了，运行结果如下:
+```bash
+$ gxemul -E testmips -C R3000 -M 64 gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.128.254
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c: main is start ...
+
+init.c: mips_init() is called
+
+Physical memory: 65536K available, base = 65536K, extended = 0K
+
+to memory 80401000 for struct page directory.
+
+to memory 80431000 for struct Pages.
+
+pmap.c:  mips vm init success
+
+pe0->env_id 2048
+
+pe1->env_id 4097
+
+pe2->env_id 6146
+
+env_init() work well!
+
+envid2env() work well!
+
+pe1->env_pgdir 83ffe000
+
+pe1->env_cr3 3ffe000
+
+env_setup_vm passed!
+
+pe2`s sp register 7f3fe000
+
+env_check() succeeded!
+
+panic at init.c:28: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+```
+看来之前出现的问题和地址有关，程序执行完自动又跳到不该跳的位置了，如果我们把异常处理那部分的地址加上，程序就正常了。
+
+## Exercise 3.13
+源文件是写好的，无需修改:
+```c++
+void
+kclock_init(void)
+{
+	/* initialize 8253 clock to interrupt 100 times/sec */
+	//outb(TIMER_MODE, TIMER_SEL0|TIMER_RATEGEN|TIMER_16BIT);
+	//outb(IO_TIMER1, TIMER_DIV(100) % 256);
+	//outb(IO_TIMER1, TIMER_DIV(100) / 256);
+	//printf("	Setup timer interrupts via 8259A\n");
+	set_timer();
+	//irq_setmask_8259A (irq_mask_8259A & ~(1<<0));
+	//printf("	unmasked timer interrupt\n");
+	
+}
+```
+
+## Thinking 3.9
+```S
+.macro	setup_c0_status set clr
+	.set	push
+	mfc0	t0, CP0_STATUS
+	or	t0, \set|\clr
+	xor	t0, \clr
+	mtc0	t0, CP0_STATUS			
+	.set	pop
+.endm
+
+	.text
+LEAF(set_timer) # set_timer函数
+
+	li t0, 0x01 # 将t0设置为1
+	sb t0, 0xb5000100 # 修改控制时钟频率的位置，修改为每秒一次
+	sw	sp, KERNEL_SP # 保存当前栈指针
+setup_c0_status STATUS_CU0|0x1001 0 # 把CP0_STATUS倒数第1位和第4位置1
+	jr ra # 返回上一级函数
+
+	nop
+END(set_timer)
+```
+
+## Exercise 3.14
+完成 `sched_yield` 调度函数:
+```c++
+void sched_yield(void)
+{
+  static u_int cur_lasttime = 1;
+  static int cur_head_index = 0;
+  struct Env *next_env;
+  --cur_lasttime;
+  if(cur_lasttime == 0 || curenv == NULL) {
+    if(curenv) {
+      LIST_INSERT_HEAD(&env_sched_list[!cur_head_index], curenv, env_sched_link);
+    }
+    if(LIST_EMPTY(&env_sched_list[cur_head_index])) {
+      cur_head_index = !cur_head_index;
+    }
+    if(LIST_EMPTY(&env_sched_list[cur_head_index])) {
+      panic("No env is RUNNABLE!");
+    }
+    next_env = LIST_FIRST(&env_sched_list[cur_head_index]);
+    LIST_REMOVE(next_env, env_sched_link);
+    cur_lasttime = next_env->env_pri;
+    env_run(next_env);
+  }
+  env_run(curenv);
+  panic("sched yield reached end");
+}
+```
+测试一下结果:
+```bash
+$ gxemul -E testmips -C R3000 -M 64 gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.128.254
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c: main is start ...
+
+init.c: mips_init() is called
+
+Physical memory: 65536K available, base = 65536K, extended = 0K
+
+to memory 80401000 for struct page directory.
+
+to memory 80431000 for struct Pages.
+
+pmap.c:  mips vm init success
+
+pe0->env_id 2048
+
+pe1->env_id 4097
+
+pe2->env_id 6146
+
+env_init() work well!
+
+envid2env() work well!
+
+pe1->env_pgdir 83ffe000
+
+pe1->env_cr3 3ffe000
+
+env_setup_vm passed!
+
+pe2`s sp register 7f3fe000
+
+env_check() succeeded!
+
+panic at init.c:28: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 12 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2  1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 12 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2  1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 ...
+```
+
+### 上传提交代码
+```bash
+git add .
+git commit -m "Finish lab3"
+git push
+```
+得到以下内容:
+```
+remote: [ Congratulations! You have passed the current lab. ]
+```
+![result](assets/result.png)
+
+## Thinking 3.10
+当时钟中断产生时，MIPS将PC指向异常处理代码段，调用 `handle_int` 函数处理。`handle_int` 分别读取 `CPU_CASUE` 和 `CPU_SATUS` 到 `t0` 和 `t2` 中，把 `t0 & t2` 存入 `t0` 得到具体的中断号，如果判断是 `4` 号中断则执行中断服务函数 `time_irq` ， `time_irq` 跳转到 `sched_yield` 时间片轮转算法从而切换进程。
