@@ -33,10 +33,10 @@ u_int mkenvid(struct Env *e)
 {
 	static u_long next_env_id = 0;
 
-    /*Hint: lower bits of envid hold e's position in the envs array. */
+  /*Hint: lower bits of envid hold e's position in the envs array. */
 	u_int idx = e - envs;
 
-    /*Hint:  high bits of envid hold an increasing number. */
+  /*Hint:  high bits of envid hold an increasing number. */
 	return (++next_env_id << (1 + LOG2NENV)) | idx;
 }
 
@@ -55,7 +55,7 @@ int envid2env(u_int envid, struct Env **penv, int checkperm)
 {
     struct Env *e;
     /* Hint:
- *      *  If envid is zero, return the current environment.*/
+     * If envid is zero, return the current environment.*/
     /*Step 1: Assign value to e using envid. */
     if(envid == 0) {
       *penv = curenv;
@@ -69,13 +69,13 @@ int envid2env(u_int envid, struct Env **penv, int checkperm)
       return -E_BAD_ENV;
     }
     /* Hint:
- *      *  Check that the calling environment has legitimate permissions
- *           *  to manipulate the specified environment.
- *                *  If checkperm is set, the specified environment
- *                     *  must be either the current environment.
- *                          *  or an immediate child of the current environment.If not, error! */
+     * Check that the calling environment has legitimate permissions
+     * to manipulate the specified environment.
+     * If checkperm is set, the specified environment
+     * must be either the current environment.
+     * or an immediate child of the current environment.If not, error! */
+    
     /*Step 2: Make a check according to checkperm. */
-
     if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
       *penv = 0;
       return -E_BAD_ENV;
@@ -97,20 +97,19 @@ void
 env_init(void)
 {
 	int i;
-    /*Step 1: Initial env_free_list. */
-    LIST_INIT(&env_free_list);
+  /*Step 1: Initial env_free_list. */
+  LIST_INIT(&env_free_list);
 
-    // Initialize process schedule list
-    LIST_INIT(&env_sched_list[0]);
-    LIST_INIT(&env_sched_list[1]);
+  // Initialize process schedule list
+  LIST_INIT(&env_sched_list[0]);
+  LIST_INIT(&env_sched_list[1]);
 
-    /*Step 2: Travel the elements in 'envs', init every element(mainly initial its status, mark it as free)
-     * and inserts them into the env_free_list as reverse order. */
-    for(i=NENV-1; i>=0; --i) {
-      envs[i].env_status = ENV_FREE;
-      LIST_INSERT_HEAD(&env_free_list, &envs[i], env_link);
-    }
-
+  /*Step 2: Travel the elements in 'envs', init every element(mainly initial its status, mark it as free)
+    * and inserts them into the env_free_list as reverse order. */
+  for(i=NENV-1; i>=0; --i) {
+    envs[i].env_status = ENV_FREE;
+    LIST_INSERT_HEAD(&env_free_list, &envs[i], env_link);
+  }
 }
 
 
@@ -124,7 +123,6 @@ env_init(void)
 static int
 env_setup_vm(struct Env *e)
 {
-
 	int i, r;
 	struct Page *p = NULL;
 	Pde *pgdir;
@@ -132,10 +130,12 @@ env_setup_vm(struct Env *e)
   /*Step 1: Allocate a page for the page directory using a function you completed in the lab2.
     * and add its reference.
     *pgdir is the page directory of Env e, assign value for it. */
-  if ((r = page_alloc(&p)) < 0) {/* Todo here*/
+  if ((r = page_alloc(&p)) < 0) { /* Todo here*/
     panic("env_setup_vm - page alloc error\n");
     return r;
   }
+  ++p->pp_ref;
+  pgdir = (Pde *)page2kva(p);
 
   /*Step 2: Zero pgdir's field before UTOP. */
   for(i = 0; i < PDX(UTOP); ++i) {
@@ -193,33 +193,31 @@ env_alloc(struct Env **new, u_int parent_id)
 	int r;
 	struct Env *e;
     
-    /*Step 1: Get a new Env from env_free_list*/
-    if(LIST_EMPTY(&env_free_list)) {
-      *new = NULL;
-      return -E_NO_FREE_ENV;
-    }
-    e = LIST_FIRST(&env_free_list);
-    
-    /*Step 2: Call certain function(has been implemented) to init kernel memory layout for this new Env.
-     *The function mainly maps the kernel address to this new Env address. */
-    r = env_setup_vm(e);
-    if(r < 0) return r;
+  /*Step 1: Get a new Env from env_free_list*/
+  if(LIST_EMPTY(&env_free_list)) {
+    *new = NULL;
+    return -E_NO_FREE_ENV;
+  }
+  e = LIST_FIRST(&env_free_list);
+  /*Step 2: Call certain function(has been implemented) to init kernel memory layout for this new Env.
+    *The function mainly maps the kernel address to this new Env address. */
+  r = env_setup_vm(e);
+  if(r < 0) return r;
+  /*Step 3: Initialize every field of new Env with appropriate values*/
+  e->env_id = mkenvid(e);
+  e->env_parent_id = parent_id;
+  e->env_status = ENV_RUNNABLE;
 
-    /*Step 3: Initialize every field of new Env with appropriate values*/
-    e->env_id = mkenvid(e);
-    e->env_parent_id = parent_id;
-    e->env_status = ENV_RUNNABLE;
+  /*Step 4: focus on initializing env_tf structure, located at this new Env. 
+    * especially the sp register,CPU status. */
+  e->env_tf.cp0_status = 0x10001004;
+  e->env_tf.regs[29] = USTACKTOP;
 
-    /*Step 4: focus on initializing env_tf structure, located at this new Env. 
-     * especially the sp register,CPU status. */
-    e->env_tf.cp0_status = 0x10001004;
-    e->env_tf.regs[29] = USTACKTOP;
+  /*Step 5: Remove the new Env from Env free list*/
+  LIST_REMOVE(e, env_link);
 
-    /*Step 5: Remove the new Env from Env free list*/
-    LIST_REMOVE(e, env_link);
-
-    *new = e;
-    return 0;
+  *new = e;
+  return 0;
 }
 
 /* Overview:
@@ -245,18 +243,44 @@ static int load_icode_mapper(u_long va, u_int32_t sgsize,
 	struct Page *p = NULL;
 	u_long i;
 	int r;
+  Pde *pgdir = env->env_pgdir;
 	u_long offset = va - ROUNDDOWN(va, BY2PG);
-
+  if(offset > 0) { // va is not aligned by BY2PG
+    page_alloc(&p);
+    page_insert(pgdir, p, va, PTE_R);
+    bcopy((void *)bin, (void *)(page2kva(p) + offset), BY2PG - offset);
+    i = BY2PG - offset;
+  }
 	/*Step 1: load all content of bin into memory. */
-	for (i = 0; i < bin_size; i += BY2PG) {
+  u_long tmpVa = ROUND(va, BY2PG);
+	for (i; i < bin_size; i += BY2PG) {
 		/* Hint: You should alloc a page and increase the reference count of it. */
+    page_alloc(&p);
+    page_insert(pgdir, p, tmpVa, PTE_R);
+    bcopy(bin + i, page2kva(p), bin_size - i);
+    tmpVa += BY2PG;
 	}
+  if(bin_size > i) {
+    page_alloc(&p);
+    page_insert(pgdir, p, tmpVa, PTE_R);
+    bcopy(bin + i, page2kva(p), bin_size - i);
+    i += BY2PG;
+    tmpVa += BY2PG;
+  }
 	/*Step 2: alloc pages to reach `sgsize` when `bin_size` < `sgsize`.
     * i has the value of `bin_size` now. */
-	while (i < sgsize) {
-
-
+	while (i + BY2PG < sgsize) {
+    page_alloc(&p);
+    page_insert(pgdir, p, tmpVa, PTE_R);
+    bzero(page2kva(p), BY2PG);
+    i += BY2PG;
+    tmpVa += BY2PG;
 	}
+  if(sgsize > i) {
+    page_alloc(&p);
+    page_insert(pgdir, p, tmpVa, PTE_R);
+    bzero(page2kva(p), sgsize - 1);
+  }
 	return 0;
 }
 /* Overview:
@@ -279,24 +303,26 @@ load_icode(struct Env *e, u_char *binary, u_int size)
 	 *  for the different mappings you create.
 	 *  Remember that the binary image is an a.out format image,
 	 *  which contains both text and data.
-     */
+   */
 	struct Page *p = NULL;
 	u_long entry_point;
 	u_long r;
-    u_long perm;
-    
-    /*Step 1: alloc a page. */
+  u_long perm = PTE_R;
 
+  Pde *pgdir = e->env_pgdir;
+  
+  /*Step 1: alloc a page. */
+  page_alloc(&p);
+  
+  /*Step 2: Use appropriate perm to set initial stack for new Env. */
+  /*Hint: The user-stack should be writable? */
+  page_insert(pgdir, p, USTACKTOP - BY2PG, perm);
 
-    /*Step 2: Use appropriate perm to set initial stack for new Env. */
-    /*Hint: The user-stack should be writable? */
+  /*Step 3:load the binary by using elf loader. */
+  load_elf(binary, size, &entry_point, (void *)e, load_icode_mapper);
 
-
-    /*Step 3:load the binary by using elf loader. */
-
-
-    /***Your Question Here***/
-    /*Step 4:Set CPU's PC register as appropriate value. */
+  /***Your Question Here***/
+  /*Step 4:Set CPU's PC register as appropriate value. */
 	e->env_tf.pc = entry_point;
 }
 
@@ -312,13 +338,18 @@ load_icode(struct Env *e, u_char *binary, u_int size)
 void
 env_create_priority(u_char *binary, int size, int priority)
 {
-        struct Env *e;
-    /*Step 1: Use env_alloc to alloc a new env. */
+  struct Env *e;
+  /*Step 1: Use env_alloc to alloc a new env. */
+  env_alloc(&e, 0);
 
-    /*Step 2: assign priority to the new env. */
+  /*Step 2: assign priority to the new env. */
+  e->env_pri = priority;
 
-    /*Step 3: Use load_icode() to load the named elf binary. */
+  /*Step 3: Use load_icode() to load the named elf binary. */
+  load_icode(e, binary, size);
 
+  /*Step 4: Use LIST_INSERT_HEAD to insert e to env_sched_list. */
+  LIST_INSERT_HEAD(env_sched_list, e, env_sched_link);
 }
 /* Overview:
  * Allocates a new env with default priority value.
@@ -330,8 +361,8 @@ env_create_priority(u_char *binary, int size, int priority)
 void
 env_create(u_char *binary, int size)
 {
-	 /*Step 1: Use env_create_priority to alloc a new env with priority 1 */
-
+	/*Step 1: Use env_create_priority to alloc a new env with priority 1 */
+  env_create_priority(binary, size, 1);
 }
 
 /* Overview:
@@ -343,33 +374,33 @@ env_free(struct Env *e)
 	Pte *pt;
 	u_int pdeno, pteno, pa;
 
-    /* Hint: Note the environment's demise.*/
+  /* Hint: Note the environment's demise.*/
 	printf("[%08x] free env %08x\n", curenv ? curenv->env_id : 0, e->env_id);
 
-    /* Hint: Flush all mapped pages in the user portion of the address space */
+  /* Hint: Flush all mapped pages in the user portion of the address space */
 	for (pdeno = 0; pdeno < PDX(UTOP); pdeno++) {
-        /* Hint: only look at mapped page tables. */
+    /* Hint: only look at mapped page tables. */
 		if (!(e->env_pgdir[pdeno] & PTE_V)) {
 			continue;
 		}
-        /* Hint: find the pa and va of the page table. */
+    /* Hint: find the pa and va of the page table. */
 		pa = PTE_ADDR(e->env_pgdir[pdeno]);
 		pt = (Pte *)KADDR(pa);
-        /* Hint: Unmap all PTEs in this page table. */
+    /* Hint: Unmap all PTEs in this page table. */
 		for (pteno = 0; pteno <= PTX(~0); pteno++)
 			if (pt[pteno] & PTE_V) {
 				page_remove(e->env_pgdir, (pdeno << PDSHIFT) | (pteno << PGSHIFT));
 			}
-        /* Hint: free the page table itself. */
+    /* Hint: free the page table itself. */
 		e->env_pgdir[pdeno] = 0;
 		page_decref(pa2page(pa));
 	}
-    /* Hint: free the page directory. */
+  /* Hint: free the page directory. */
 	pa = e->env_cr3;
 	e->env_pgdir = 0;
 	e->env_cr3 = 0;
 	page_decref(pa2page(pa));
-    /* Hint: return the environment to the free list. */
+  /* Hint: return the environment to the free list. */
 	e->env_status = ENV_FREE;
 	LIST_INSERT_HEAD(&env_free_list, e, env_link);
 	LIST_REMOVE(e, env_sched_link);
@@ -382,16 +413,16 @@ env_free(struct Env *e)
 void
 env_destroy(struct Env *e)
 {
-    /* Hint: free e. */
+  /* Hint: free e. */
 	env_free(e);
 
-    /* Hint: schedule to run a new environment. */
+  /* Hint: schedule to run a new environment. */
 	if (curenv == e) {
 		curenv = NULL;
-        /* Hint:Why this? */
+    /* Hint:Why this? */
 		bcopy((void *)KERNEL_SP - sizeof(struct Trapframe),
-			  (void *)TIMESTACK - sizeof(struct Trapframe),
-			  sizeof(struct Trapframe));
+			    (void *)TIMESTACK - sizeof(struct Trapframe),
+			    sizeof(struct Trapframe));
 		printf("i am killed ... \n");
 		sched_yield();
 	}
@@ -415,39 +446,46 @@ void
 env_run(struct Env *e)
 {
 	/*Step 1: save register state of curenv. */
-    /* Hint: if there is a environment running,you should do
-    *  context switch.You can imitate env_destroy() 's behaviors.*/
+  /* Hint: if there is a environment running, you should do
+   *  context switch. You can imitate env_destroy() 's behaviors.*/
+  if(curenv) {
+    bcopy((void *)TIMESTACK - sizeof(struct Trapframe),
+          &(curenv->env_tf),
+          sizeof(struct Trapframe));
+    curenv->env_tf.pc = curenv->env_tf.cp0_epc;
+  }
 
+  /*Step 2: Set 'curenv' to the new environment. */
+  curenv = e;
+  ++curenv->env_runs;
 
-    /*Step 2: Set 'curenv' to the new environment. */
+  /*Step 3: Use lcontext() to switch to its address space. */
+  lcontext(e->env_pgdir);
 
-
-    /*Step 3: Use lcontext() to switch to its address space. */
-
-
-    /*Step 4: Use env_pop_tf() to restore the environment's
-     * environment   registers and drop into user mode in the
-     * the   environment.
-     */
-    /* Hint: You should use GET_ENV_ASID there.Think why? */
-
+  /*Step 4: Use env_pop_tf() to restore the environment's
+    * environment registers and drop into user mode in the
+    * the environment.
+    */
+  /* Hint: You should use GET_ENV_ASID there. Think why? */
+  env_pop_tf(&(e->env_tf), GET_ENV_ASID(e->env_id));
 }
 void env_check()
 {
-        struct Env *temp, *pe, *pe0, *pe1, *pe2;
-        struct Env_list fl;
-        int re = 0;
+  struct Env *temp, *pe, *pe0, *pe1, *pe2;
+  struct Env_list fl;
+  int re = 0;
  	// should be able to allocate three envs
 	pe0 = 0;
-        pe1 = 0;
-        pe2 = 0;
-        assert(env_alloc(&pe0, 0) == 0);
-        assert(env_alloc(&pe1, 0) == 0);
-        assert(env_alloc(&pe2, 0) == 0);
+  pe1 = 0;
+  pe2 = 0;
+  
+  assert(env_alloc(&pe0, 0) == 0);
+  assert(env_alloc(&pe1, 0) == 0);
+  assert(env_alloc(&pe2, 0) == 0);
 
-        assert(pe0);
-        assert(pe1 && pe1 != pe0);
-        assert(pe2 && pe2 != pe1 && pe2 != pe0);
+  assert(pe0);
+  assert(pe1 && pe1 != pe0);
+  assert(pe2 && pe2 != pe1 && pe2 != pe0);
 
  	// temporarily steal the rest of the free envs
  	fl = env_free_list;
@@ -460,42 +498,42 @@ void env_check()
 	// recover env_free_list
 	env_free_list = fl;
 
-        printf("pe0->env_id %d\n",pe0->env_id);
-        printf("pe1->env_id %d\n",pe1->env_id);
-        printf("pe2->env_id %d\n",pe2->env_id);
+  printf("pe0->env_id %d\n",pe0->env_id);
+  printf("pe1->env_id %d\n",pe1->env_id);
+  printf("pe2->env_id %d\n",pe2->env_id);
 
-        assert(pe0->env_id == 2048);
-        assert(pe1->env_id == 4097);
-        assert(pe2->env_id == 6146);
-        printf("env_init() work well!\n");
+  assert(pe0->env_id == 2048);
+  assert(pe1->env_id == 4097);
+  assert(pe2->env_id == 6146);
+  printf("env_init() work well!\n");
 
-	 /* check envid2env work well */
-	 pe2->env_status = ENV_FREE;
-        re = envid2env(pe2->env_id, &pe, 0);
+	/* check envid2env work well */
+	pe2->env_status = ENV_FREE;
+  re = envid2env(pe2->env_id, &pe, 0);
 
-        assert(pe == 0 && re == -E_BAD_ENV);
+  assert(pe == 0 && re == -E_BAD_ENV);
 
-        pe2->env_status = ENV_RUNNABLE;
-        re = envid2env(pe2->env_id, &pe, 0);
+  pe2->env_status = ENV_RUNNABLE;
+  re = envid2env(pe2->env_id, &pe, 0);
 
-        assert(pe->env_id == pe2->env_id &&re == 0);
+  assert(pe->env_id == pe2->env_id &&re == 0);
 
-        temp = curenv;
-        curenv = pe0;
-        re = envid2env(pe2->env_id, &pe, 1);
-        assert(pe == 0 && re == -E_BAD_ENV);
-        curenv = temp;
-        printf("envid2env() work well!\n");
+  temp = curenv;
+  curenv = pe0;
+  re = envid2env(pe2->env_id, &pe, 1);
+  assert(pe == 0 && re == -E_BAD_ENV);
+  curenv = temp;
+  printf("envid2env() work well!\n");
 
 	/* check env_setup_vm() work well */
 	printf("pe1->env_pgdir %x\n",pe1->env_pgdir);
-        printf("pe1->env_cr3 %x\n",pe1->env_cr3);
+  printf("pe1->env_cr3 %x\n",pe1->env_cr3);
 
-        assert(pe2->env_pgdir[PDX(UTOP)] == boot_pgdir[PDX(UTOP)]);
-        assert(pe2->env_pgdir[PDX(UTOP)-1] == 0);
-        printf("env_setup_vm passed!\n");
+  assert(pe2->env_pgdir[PDX(UTOP)] == boot_pgdir[PDX(UTOP)]);
+  assert(pe2->env_pgdir[PDX(UTOP)-1] == 0);
+  printf("env_setup_vm passed!\n");
 
-        assert(pe2->env_tf.cp0_status == 0x10001004);
-        printf("pe2`s sp register %x\n",pe2->env_tf.regs[29]);
-        printf("env_check() succeeded!\n");
+  assert(pe2->env_tf.cp0_status == 0x10001004);
+  printf("pe2`s sp register %x\n",pe2->env_tf.regs[29]);
+  printf("env_check() succeeded!\n");
 }
