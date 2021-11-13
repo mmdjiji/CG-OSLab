@@ -1,9 +1,4 @@
-
-
 #include "lib.h"
-
-
-
 
 void halt(void);
 

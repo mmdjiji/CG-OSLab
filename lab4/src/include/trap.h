@@ -99,7 +99,7 @@ void trap_init();
 #define TF_HI		((TF_STATUS) + 4)
 #define TF_LO		((TF_HI) + 4)
 
-#define TF_BADVADDR	((TF_LO)+4)
+#define TF_BADVADDR	((TF_LO) + 4)
 #define TF_CAUSE	((TF_BADVADDR) + 4)
 #define TF_EPC		((TF_CAUSE) + 4)
 #define TF_PC		((TF_EPC) + 4)
