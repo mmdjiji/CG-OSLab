@@ -16,7 +16,7 @@ NESTED(handle_sys,TF_SIZE, sp)
     sw      t0, TF_EPC(sp)              // EPC <- t0
 
     // TODO: Copy the syscall number into $a0.
-    lw      a0, 16(sp)                  // a0 <- Trapframe($a0)
+    lw      a0, TF_REG4(sp)             // a0 <- Trapframe($a0)
     
     addiu   a0, a0, -__SYSCALL_BASE     // a0 <- relative syscall number
     sll     t0, a0, 2                   // t0 <- relative syscall number times 4
@@ -28,6 +28,11 @@ NESTED(handle_sys,TF_SIZE, sp)
     lw      t3, 16(t0)                  // t3 <- the 5th argument of msyscall
     lw      t4, 20(t0)                  // t4 <- the 6th argument of msyscall
 
+    lw      a0, TF_REG4(sp)
+    lw      a1, TF_REG5(sp)
+    lw      a2, TF_REG6(sp)
+    lw      a3, TF_REG7(sp)
+
     // TODO: Allocate a space of six arguments on current kernel stack and copy the six arguments to proper location
     addiu   sp, sp, -24
     sw      t3, 16(sp)
@@ -37,7 +42,7 @@ NESTED(handle_sys,TF_SIZE, sp)
     nop
     
     // TODO: Resume current kernel stack
-    
+    addiu sp, sp, 24
     sw      v0, TF_REG2(sp)             // Store return value of function sys_* (in $v0) into trapframe
 
     j       ret_from_exception          // Return from exeception

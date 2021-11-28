@@ -103,6 +103,6 @@ nop
 		lw	$2,TF_REG2(sp)                   
 		lw	$1,TF_REG1(sp) 
 		lw	k0,TF_EPC(sp) 	//atomic operation needed 
-		jr	k0			//
+		jr	k0
 		lw	sp,TF_REG29(sp)  /* Deallocate stack */  
 

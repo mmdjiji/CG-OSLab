@@ -88,7 +88,7 @@
 
 #define KERNBASE 0x80010000
 
-#define VPT (ULIM + PDMAP )
+#define VPT (ULIM + PDMAP)
 #define KSTACKTOP (VPT-0x100)
 #define KSTKSIZE (8*BY2PG)
 #define ULIM 0x80000000

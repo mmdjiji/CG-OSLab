@@ -114,8 +114,9 @@ int sys_set_pgfault_handler(int sysno, u_int envid, u_int func, u_int xstacktop)
 	// Your code here.
 	struct Env *env;
 	int ret;
-
-
+	if((ret = envid2env(envid, &env, 1)) < 0) return ret;
+	env->env_pgfault_handler = func;
+	env->env_xstacktop = xstacktop;
 	return 0;
 	//	panic("sys_set_pgfault_handler not implemented");
 }
@@ -148,7 +149,7 @@ int sys_mem_alloc(int sysno, u_int envid, u_int va, u_int perm)
   if(!(perm & PTE_V) || (perm & PTE_COW)) return -E_INVAL;
 	if((ret = envid2env(envid, &env, 1)) < 0) return -E_BAD_ENV;
 	if((ret = page_alloc(&ppage)) < 0) return -E_NO_MEM;
-	if((ret = page_insert(env->env_pgdir, &ppage, va, perm)) < 0) return -E_NO_MEM;
+	if((ret = page_insert(env->env_pgdir, ppage, va, perm)) < 0) return -E_NO_MEM;
 	return 0;
 }
 
@@ -183,11 +184,11 @@ int sys_mem_map(int sysno, u_int srcid, u_int srcva, u_int dstid, u_int dstva,
   //your code here
 	if(round_srcva >= UTOP || round_srcva < 0 || round_dstva >= UTOP || round_dstva < 0) return -E_UNSPECIFIED;
 	if(!(perm & PTE_V)) return -E_INVAL;
-	if((ret = envid2env(srcid, &srcenv, 1)) < 0) return -E_BAD_ENV;
-	if((ret = envid2env(dstid, &dstenv, 1)) < 0) return -E_BAD_ENV;
+	if((ret = envid2env(srcid, &srcenv, 0)) < 0) return -E_BAD_ENV;
+	if((ret = envid2env(dstid, &dstenv, 0)) < 0) return -E_BAD_ENV;
 	if((ppage = page_lookup(srcenv->env_pgdir, round_srcva, &ppte)) == NULL) return -E_UNSPECIFIED;
 	if((perm & PTE_R) && !((*ppte) & PTE_R)) return -E_INVAL; // restriction that can't go from non-writable to writable
-	if((ret = page_insert(dstenv->env_pgdir, &ppage, round_dstva, perm)) < 0) return -E_NO_MEM;
+	if((ret = page_insert(dstenv->env_pgdir, ppage, round_dstva, perm)) < 0) return -E_NO_MEM;
 	return ret;
 }
 
@@ -206,7 +207,7 @@ int sys_mem_unmap(int sysno, u_int envid, u_int va)
 	int ret = 0;
 	struct Env *env;
 	if(va >= UTOP || va < 0) return -E_INVAL;
-	if((ret = envid2env(envid, &env, 0) < 0)) return -E_BAD_ENV;
+	if((ret = envid2env(envid, &env, 0)) < 0) return -E_BAD_ENV;
 	page_remove(env->env_pgdir, va);
 	return ret;
 	//	panic("sys_mem_unmap not implemented");
@@ -226,9 +227,19 @@ int sys_mem_unmap(int sysno, u_int envid, u_int va)
  */
 int sys_env_alloc(void)
 {
-	// Your code here.
 	int r;
 	struct Env *e;
+
+	// Your code here.
+	if((r = env_alloc(&e, curenv->env_id)) < 0) { // Allocate struct Env to e
+		return r;
+	}
+	bcopy((void *)(KERNEL_SP - sizeof(struct Trapframe)), (void *)&(e->env_tf), sizeof(struct Trapframe));
+	e->env_tf = curenv->env_tf; 			// Trapframe copy
+	e->env_tf.pc = e->env_tf.cp0_epc; // Set program counter
+	e->env_status = ENV_NOT_RUNNABLE; // Set process status
+	e->env_pri = curenv->env_pri;			// Set priority
+	e->env_tf.regs[2] = 0;						// Set return value of child process
 
 	return e->env_id;
 	//	panic("sys_env_alloc not implemented");
@@ -251,7 +262,12 @@ int sys_set_env_status(int sysno, u_int envid, u_int status)
 	// Your code here.
 	struct Env *env;
 	int ret;
-
+	if(status > 2 || status < 0) return -E_INVAL;
+	if((ret = envid2env(envid, &env, 1)) < 0) return ret;
+	env->env_status = status;
+	if(status == ENV_RUNNABLE) {
+		LIST_INSERT_HEAD(env_sched_list, env, env_sched_link);
+	}
 	return 0;
 	//	panic("sys_env_set_status not implemented");
 }

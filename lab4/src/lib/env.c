@@ -238,50 +238,88 @@ env_alloc(struct Env **new, u_int parent_id)
  */
 static int load_icode_mapper(u_long va, u_int32_t sgsize,
 							 u_char *bin, u_int32_t bin_size, void *user_data)
+// {
+// 	struct Env *env = (struct Env *)user_data;
+// 	struct Page *p = NULL;
+// 	u_long i;
+// 	int r;
+//   Pde *pgdir = env->env_pgdir;
+// 	u_long offset = va - ROUNDDOWN(va, BY2PG);
+//   if(offset > 0) { // va is not aligned by BY2PG
+//     page_alloc(&p);
+//     page_insert(pgdir, p, va, PTE_R);
+//     bcopy((void *)bin, (void *)(page2kva(p) + offset), BY2PG - offset);
+//     i = BY2PG - offset;
+//   }
+// 	/*Step 1: load all content of bin into memory. */
+//   u_long tmpVa = ROUND(va, BY2PG);
+// 	for (i; i < bin_size; i += BY2PG) {
+// 		/* Hint: You should alloc a page and increase the reference count of it. */
+//     page_alloc(&p);
+//     page_insert(pgdir, p, tmpVa, PTE_R);
+//     bcopy(bin + i, page2kva(p), bin_size - i);
+//     tmpVa += BY2PG;
+// 	}
+//   if(bin_size > i) {
+//     page_alloc(&p);
+//     page_insert(pgdir, p, tmpVa, PTE_R);
+//     bcopy(bin + i, page2kva(p), bin_size - i);
+//     i += BY2PG;
+//     tmpVa += BY2PG;
+//   }
+// 	/*Step 2: alloc pages to reach `sgsize` when `bin_size` < `sgsize`.
+//     * i has the value of `bin_size` now. */
+// 	while (i + BY2PG < sgsize) {
+//     page_alloc(&p);
+//     page_insert(pgdir, p, tmpVa, PTE_R);
+//     bzero(page2kva(p), BY2PG);
+//     i += BY2PG;
+//     tmpVa += BY2PG;
+// 	}
+//   if(sgsize > i) {
+//     page_alloc(&p);
+//     page_insert(pgdir, p, tmpVa, PTE_R);
+//     bzero(page2kva(p), sgsize - 1);
+//   }
+// 	return 0;
+// }
 {
-	struct Env *env = (struct Env *)user_data;
-	struct Page *p = NULL;
-	u_long i;
-	int r;
-  Pde *pgdir = env->env_pgdir;
+  struct Env *env = (struct Env *)user_data;
+  struct Page *p = NULL;
+  u_long i = 0;
+  int r;
 	u_long offset = va - ROUNDDOWN(va, BY2PG);
-  if(offset > 0) { // va is not aligned by BY2PG
-    page_alloc(&p);
-    page_insert(pgdir, p, va, PTE_R);
-    bcopy((void *)bin, (void *)(page2kva(p) + offset), BY2PG - offset);
-    i = BY2PG - offset;
-  }
-	/*Step 1: load all content of bin into memory. */
-  u_long tmpVa = ROUND(va, BY2PG);
-	for (i; i < bin_size; i += BY2PG) {
-		/* Hint: You should alloc a page and increase the reference count of it. */
-    page_alloc(&p);
-    page_insert(pgdir, p, tmpVa, PTE_R);
-    bcopy(bin + i, page2kva(p), bin_size - i);
-    tmpVa += BY2PG;
+	 /*Step 1: load all content of bin into memory. */
+	if(offset != 0){
+    if((r = page_alloc(&p)) != 0) {
+      return r;
+    }
+    page_insert(env->env_pgdir, p, va, PTE_R);
+		bcopy((void *)bin, (void *)(page2kva(p) + offset), MIN(bin_size, BY2PG - offset));
+		//va = va - offset;
+		i = MIN(BY2PG-offset, bin_size);
 	}
-  if(bin_size > i) {
-    page_alloc(&p);
-    page_insert(pgdir, p, tmpVa, PTE_R);
-    bcopy(bin + i, page2kva(p), bin_size - i);
-    i += BY2PG;
-    tmpVa += BY2PG;
-  }
-	/*Step 2: alloc pages to reach `sgsize` when `bin_size` < `sgsize`.
-    * i has the value of `bin_size` now. */
-	while (i + BY2PG < sgsize) {
-    page_alloc(&p);
-    page_insert(pgdir, p, tmpVa, PTE_R);
-    bzero(page2kva(p), BY2PG);
-    i += BY2PG;
-    tmpVa += BY2PG;
+	for(; i<bin_size; i+=BY2PG){
+    if ((r = page_alloc(&p)) != 0) {
+      return r;
+    }
+		page_insert(env->env_pgdir, p, va+i, PTE_R);
+		if(bin_size - i < BY2PG){
+			bcopy((void *)bin+i, page2kva(p), bin_size-i);
+		}else{
+			bcopy((void *)bin+i, page2kva(p), BY2PG);
+		}
 	}
-  if(sgsize > i) {
-    page_alloc(&p);
-    page_insert(pgdir, p, tmpVa, PTE_R);
-    bzero(page2kva(p), sgsize - 1);
-  }
-	return 0;
+  //Step 2: alloc pages to reach `sgsize` when `bin_size` < `sgsize`.
+  // * hint: variable `i` has the value of `bin_size` now! 
+	while(i<sgsize) {
+		if((r=page_alloc(&p))!=0) {
+			return r;
+		}
+		page_insert(env->env_pgdir, p, va+i, PTE_R);
+		i+=BY2PG;
+	}
+  return 0;
 }
 /* Overview:
  *  Sets up the the initial stack and program binary for a user process.
