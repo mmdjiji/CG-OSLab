@@ -76,7 +76,8 @@ int envid2env(u_int envid, struct Env **penv, int checkperm)
      * or an immediate child of the current environment.If not, error! */
     
     /*Step 2: Make a check according to checkperm. */
-    if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
+    /* warning: `checkperm == 1` cannot alter to `checkperm` */
+    if (checkperm == 1 && e != curenv && e->env_parent_id != curenv->env_id) {
       *penv = 0;
       return -E_BAD_ENV;
     }
@@ -144,9 +145,9 @@ env_setup_vm(struct Env *e)
 
   /*Step 3: Copy kernel's boot_pgdir to pgdir. */
   for(i = PDX(UTOP); i <= PDX(~0); ++i) {
-    if(i != PDX(VPT) && i != PDX(UVPT)) { // except VPT and UVPT
+    // if(i != PDX(VPT) && i != PDX(UVPT)) { // except VPT and UVPT [bug]
       pgdir[i] = boot_pgdir[i];
-    }
+    // }
   }
 
   /* Hint:
@@ -387,7 +388,8 @@ env_create_priority(u_char *binary, int size, int priority)
   load_icode(e, binary, size);
 
   /*Step 4: Use LIST_INSERT_HEAD to insert e to env_sched_list. */
-  LIST_INSERT_HEAD(env_sched_list, e, env_sched_link);
+  LIST_INSERT_HEAD(&env_sched_list[0], e, env_sched_link);
+  // [bug] `&env_sched_list[0]` cannot be written as `env_sched_list`
 }
 /* Overview:
  * Allocates a new env with default priority value.
@@ -486,16 +488,20 @@ env_run(struct Env *e)
 	/*Step 1: save register state of curenv. */
   /* Hint: if there is a environment running, you should do
    *  context switch. You can imitate env_destroy() 's behaviors.*/
+  struct Trapframe *old;
+  old = (struct Trapframe *)((void *)TIMESTACK - sizeof(struct Trapframe));
   if(curenv) {
-    bcopy((void *)TIMESTACK - sizeof(struct Trapframe),
-          &(curenv->env_tf),
-          sizeof(struct Trapframe));
+    // bcopy((void *)TIMESTACK - sizeof(struct Trapframe),
+    //       &(curenv->env_tf),
+    //       sizeof(struct Trapframe));
+    curenv->env_tf = *old;
     curenv->env_tf.pc = curenv->env_tf.cp0_epc;
   }
 
   /*Step 2: Set 'curenv' to the new environment. */
   curenv = e;
-  ++curenv->env_runs;
+  curenv->env_status = ENV_RUNNABLE;
+  // ++curenv->env_runs; [bug] add this will cause ipc: -2
 
   /*Step 3: Use lcontext() to switch to its address space. */
   lcontext(e->env_pgdir);

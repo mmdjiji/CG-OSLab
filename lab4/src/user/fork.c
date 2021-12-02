@@ -127,11 +127,7 @@ static void duppage(u_int envid, u_int pn)
   
   addr = pn * BY2PG;
   perm = (*vpt)[pn] & 0xfff;
-  if(!(perm & PTE_R) || !(perm & PTE_V)) {        // readonly page || invalid page : no change
-    syscall_mem_map(0, addr, envid, addr, perm);
-  } else if(perm & PTE_LIBRARY) {                 // shared page : no change
-    syscall_mem_map(0, addr, envid, addr, perm);
-  } else if(perm & PTE_COW) {                     // COW page : no change
+  if((perm & PTE_LIBRARY) || !(perm & PTE_R) || (perm&PTE_COW)) {// no change
     syscall_mem_map(0, addr, envid, addr, perm);
   } else {                                        // add COW         
     perm |= PTE_COW;
@@ -155,43 +151,47 @@ extern void __asm_pgfault_handler(void);
 
 int fork(void)
 {
+  // Your code here.
   u_int newenvid;
   extern struct Env *envs;
   extern struct Env *env;
   u_int i;
-  u_int parent_id = syscall_getenvid(); // save the father process's id
-  u_int envid;
+  u_int r;
 
-  // The parent installs pgfault using set_pgfault_handler
   set_pgfault_handler(pgfault);
 
-  //alloc a new alloc
-  newenvid = syscall_env_alloc();
+  // u_int parent_id = syscall_getenvid(); // save the father process's id
 
+  newenvid = syscall_env_alloc();
   if(newenvid == 0) { // child process
     env = envs + ENVX(syscall_getenvid());
-    env->env_parent_id = parent_id;
+    // env->env_parent_id = parent_id; [bug]
     return 0;
   }
-  
-  for(i=0; i<VPN(USTACKTOP); ++i) {
-    if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
-      duppage(newenvid, i);
+
+  // Copy On Write
+  for(i=0; i<USTACKTOP; i+=BY2PG) {
+    if(((*vpd)[i >> PDSHIFT]) && ((*vpt)[i >> PGSHIFT])) {
+      duppage(newenvid, VPN(i));
     }
   }
 
-  if(syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R) < 0) {
-    writef("Error at fork.c/fork. syscall_mem_alloc for Son_env failed.\n");
-    return -1;
-  }
-
-  if(syscall_set_pgfault_handler(newenvid, __asm_pgfault_handler, UXSTACKTOP) < 0) {
-    writef("Error at fork.c/fork. syscall_set_pgfault_handler for Son_env failed.\n");
-    return -1;
-  }
+  // I don't know why it doesn't work successfully
+  // for(i=0; i<VPN(USTACKTOP); ++i) {
+  //   if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
+  //     duppage(newenvid, i);
+  //   }
+  // }
   
-  syscall_set_env_status(newenvid, ENV_RUNNABLE);
-  
+  if((r = syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_pgfault_handler(newenvid,__asm_pgfault_handler, UXSTACKTOP)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_env_status(newenvid, ENV_RUNNABLE)) < 0) {
+    return r; // [bug] `return r` is important, return other `E_` prefix value will cause error
+  }
   return newenvid;
 }
 

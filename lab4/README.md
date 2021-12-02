@@ -39,7 +39,7 @@ NESTED(handle_sys,TF_SIZE, sp)
     sw      t0, TF_EPC(sp)              // EPC <- t0
 
     // TODO: Copy the syscall number into $a0.
-    lw      a0, 16(sp)                  // a0 <- Trapframe($a0)
+    lw      a0, TF_REG4(sp)             // a0 <- Trapframe($a0)
     
     addiu   a0, a0, -__SYSCALL_BASE     // a0 <- relative syscall number
     sll     t0, a0, 2                   // t0 <- relative syscall number times 4
@@ -51,6 +51,11 @@ NESTED(handle_sys,TF_SIZE, sp)
     lw      t3, 16(t0)                  // t3 <- the 5th argument of msyscall
     lw      t4, 20(t0)                  // t4 <- the 6th argument of msyscall
 
+    lw      a0, TF_REG4(sp)
+    lw      a1, TF_REG5(sp)
+    lw      a2, TF_REG6(sp)
+    lw      a3, TF_REG7(sp)
+
     // TODO: Allocate a space of six arguments on current kernel stack and copy the six arguments to proper location
     addiu   sp, sp, -24
     sw      t3, 16(sp)
@@ -60,7 +65,7 @@ NESTED(handle_sys,TF_SIZE, sp)
     nop
     
     // TODO: Resume current kernel stack
-    
+    addiu sp, sp, 24
     sw      v0, TF_REG2(sp)             // Store return value of function sys_* (in $v0) into trapframe
 
     j       ret_from_exception          // Return from exeception
@@ -81,7 +86,7 @@ int sys_mem_alloc(int sysno, u_int envid, u_int va, u_int perm)
   if(!(perm & PTE_V) || (perm & PTE_COW)) return -E_INVAL;
 	if((ret = envid2env(envid, &env, 1)) < 0) return -E_BAD_ENV;
 	if((ret = page_alloc(&ppage)) < 0) return -E_NO_MEM;
-	if((ret = page_insert(env->env_pgdir, &ppage, va, perm)) < 0) return -E_NO_MEM;
+	if((ret = page_insert(env->env_pgdir, ppage, va, perm)) < 0) return -E_NO_MEM;
 	return 0;
 }
 ```
@@ -103,14 +108,13 @@ int sys_mem_map(int sysno, u_int srcid, u_int srcva, u_int dstid, u_int dstva,
 	round_srcva = ROUNDDOWN(srcva, BY2PG);
 	round_dstva = ROUNDDOWN(dstva, BY2PG);
 
-  //your code here
-	if(round_srcva >= UTOP || round_srcva < 0 || round_dstva >= UTOP || round_dstva < 0) return -E_UNSPECIFIED;
-	if(!(perm & PTE_V)) return -E_INVAL;
-	if((ret = envid2env(srcid, &srcenv, 1)) < 0) return -E_BAD_ENV;
-	if((ret = envid2env(dstid, &dstenv, 1)) < 0) return -E_BAD_ENV;
-	if((ppage = page_lookup(srcenv->env_pgdir, round_srcva, &ppte)) == NULL) return -E_UNSPECIFIED;
-	if((perm & PTE_R) && !((*ppte) & PTE_R)) return -E_INVAL; // restriction that can't go from non-writable to writable
-	if((ret = page_insert(dstenv->env_pgdir, &ppage, round_dstva, perm)) < 0) return -E_NO_MEM;
+	if((perm & PTE_V)== 0) return -E_INVAL;
+	if(srcva>=UTOP||dstva>=UTOP) return -E_INVAL;
+	if((ret = envid2env(srcid, &srcenv, 0)) < 0) return ret;
+	if((ret = envid2env(dstid, &dstenv, 0)) < 0) return ret;
+	if((ppage = page_lookup(srcenv->env_pgdir, round_srcva, &ppte)) == NULL) return -E_INVAL;
+	if(ppte != NULL && (perm & PTE_R) == 1 && ((*ppte) & PTE_R) == 0) return -E_INVAL;
+	ret = page_insert(dstenv->env_pgdir, ppage, round_dstva, perm);
 	return ret;
 }
 ```
@@ -158,19 +162,34 @@ int sys_ipc_can_send(int sysno, u_int envid, u_int value, u_int srcva,
 	int r;
 	struct Env *e;
 	struct Page *p;
+	struct Pte *ppte;
+	
 	if(srcva >= UTOP || srcva < 0) return -E_INVAL;
 	if((r = envid2env(envid, &e, 0)) < 0) return -E_BAD_ENV;
 	if(e->env_ipc_recving != 1) return -E_IPC_NOT_RECV;
-	if(srcva != 0) {
-		e->env_ipc_perm = perm | PTE_V | PTE_R;
-		if((p = page_lookup(curenv->env_pgdir, srcva, 0)) <= 0) return -E_INVAL;
-		else if(page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm) < 0) return -E_INVAL;
-	}
+	// if(srcva != 0) {
+	// 	e->env_ipc_perm = perm | PTE_V | PTE_R;
+	// 	if((p = page_lookup(curenv->env_pgdir, srcva, 0)) <= 0) return -E_INVAL;
+	// 	else if(page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm) < 0) return -E_INVAL;
+	// }
 	e->env_ipc_from = curenv->env_id;
 	e->env_ipc_value = value;
 	e->env_ipc_perm = perm;
 	e->env_ipc_recving = 0;
 	e->env_status = ENV_RUNNABLE;
+	
+	if(srcva == 0) {
+		return 0;
+	}
+	
+	p = page_lookup(curenv->env_pgdir, srcva, &ppte);
+	if(p == 0) {
+		return -E_INVAL;
+	}
+	r = page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm);
+	if(r != 0) {
+		return r;
+	}
 	return 0;
 }
 ```
@@ -197,8 +216,8 @@ int sys_env_alloc(void)
 	if((r = env_alloc(&e, curenv->env_id)) < 0) { // Allocate struct Env to e
 		return r;
 	}
-	bcopy((void *)(KERNEL_SP - sizeof(struct Trapframe)), &(e->env_tf), sizeof(struct Trapframe));
-	e->env_tf = curenv->env_tf; 			// Trapframe copy
+	bcopy((void *)(KERNEL_SP - sizeof(struct Trapframe)), (void *)&(e->env_tf), sizeof(struct Trapframe));
+	// e->env_tf = curenv->env_tf; 			// Trapframe copy [bug, i don't know why]
 	e->env_tf.pc = e->env_tf.cp0_epc; // Set program counter
 	e->env_status = ENV_NOT_RUNNABLE; // Set process status
 	e->env_pri = curenv->env_pri;			// Set priority
@@ -214,26 +233,48 @@ int sys_env_alloc(void)
 ```c++
 int fork(void)
 {
-	u_int newenvid;
-	extern struct Env *envs;
-	extern struct Env *env;
-	u_int i;
+  // Your code here.
+  u_int newenvid;
+  extern struct Env *envs;
+  extern struct Env *env;
+  u_int i;
+  u_int r;
 
-	// Your code here.
+  set_pgfault_handler(pgfault);
 
-	// The parent installs pgfault using set_pgfault_handler
-	set_pgfault_handler(pgfault);
+  // u_int parent_id = syscall_getenvid(); // save the father process's id
 
-	//alloc a new alloc
-	newenvid = syscall_env_alloc();
-	if(newenvid == 0) { // child process
-		env = envs + ENVX(syscall_getenvid());
-	} else { // father process
-		syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R | PTE_LIBRARY);
-		syscall_set_pgfault_handler(newenvid, __asm_pgfault_handler, UXSTACKTOP);
-		syscall_set_env_status(newenvid, ENV_RUNNABLE);
-	}
-	return newenvid;
+  newenvid = syscall_env_alloc();
+  if(newenvid == 0) { // child process
+    env = envs + ENVX(syscall_getenvid());
+    // env->env_parent_id = parent_id; [bug]
+    return 0;
+  }
+
+  // Copy On Write
+  for(i=0; i<USTACKTOP; i+=BY2PG) {
+    if(((*vpd)[i >> PDSHIFT]) && ((*vpt)[i >> PGSHIFT])) {
+      duppage(newenvid, VPN(i));
+    }
+  }
+
+  // I don't know why it doesn't work successfully
+  // for(i=0; i<VPN(USTACKTOP); ++i) {
+  //   if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
+  //     duppage(newenvid, i);
+  //   }
+  // }
+  
+  if((r = syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_pgfault_handler(newenvid,__asm_pgfault_handler, UXSTACKTOP)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_env_status(newenvid, ENV_RUNNABLE)) < 0) {
+    return r; // [bug] `return r` is important, return other `E_` prefix value will cause error
+  }
+  return newenvid;
 }
 ```
 
@@ -284,11 +325,7 @@ static void duppage(u_int envid, u_int pn)
   
   addr = pn * BY2PG;
   perm = (*vpt)[pn] & 0xfff;
-  if(!(perm & PTE_R) || !(perm & PTE_V)) {        // readonly page || invalid page : no change
-    syscall_mem_map(0, addr, envid, addr, perm);
-  } else if(perm & PTE_LIBRARY) {                 // shared page : no change
-    syscall_mem_map(0, addr, envid, addr, perm);
-  } else if(perm & PTE_COW) {                     // COW page : no change
+  if((perm & PTE_LIBRARY) || !(perm & PTE_R) || (perm&PTE_COW)) {// no change
     syscall_mem_map(0, addr, envid, addr, perm);
   } else {                                        // add COW         
     perm |= PTE_COW;
@@ -391,12 +428,18 @@ int sys_set_env_status(int sysno, u_int envid, u_int status)
 	// Your code here.
 	struct Env *env;
 	int ret;
-	if(status > 2 || status < 0) return -E_INVAL;
-	if((ret = envid2env(envid, &env, 1)) < 0) return ret;
-	env->env_status = status;
-	if(status == ENV_RUNNABLE) {
-		LIST_INSERT_HEAD(env_sched_list, env, env_sched_link);
+	if(status != ENV_RUNNABLE && status != ENV_NOT_RUNNABLE && status != ENV_FREE) {
+		return -E_INVAL;
 	}
+
+	if((ret = envid2env(envid, &env, 0)) < 0) return ret;
+	
+	if(status == ENV_RUNNABLE && env->env_status != ENV_RUNNABLE) {
+		LIST_INSERT_TAIL(&env_sched_list[0], env, env_sched_link);
+	} else if (status != ENV_RUNNABLE && env->env_status == ENV_RUNNABLE) {
+		LIST_REMOVE(env, env_sched_link);
+	}
+	env->env_status = status;
 	return 0;
 	//	panic("sys_env_set_status not implemented");
 }
@@ -406,43 +449,510 @@ int sys_set_env_status(int sysno, u_int envid, u_int status)
 ```c++
 int fork(void)
 {
+  // Your code here.
   u_int newenvid;
   extern struct Env *envs;
   extern struct Env *env;
   u_int i;
-  u_int parent_id = syscall_getenvid(); // save the father process's id
-  u_int envid;
+  u_int r;
 
-  // The parent installs pgfault using set_pgfault_handler
   set_pgfault_handler(pgfault);
 
-  //alloc a new alloc
-  newenvid = syscall_env_alloc();
+  // u_int parent_id = syscall_getenvid(); // save the father process's id
 
+  newenvid = syscall_env_alloc();
   if(newenvid == 0) { // child process
     env = envs + ENVX(syscall_getenvid());
-    env->env_parent_id = parent_id;
+    // env->env_parent_id = parent_id; [bug]
     return 0;
   }
-  
-  for(i=0; i<VPN(USTACKTOP); ++i) {
-    if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
-      duppage(newenvid, i);
+
+  // Copy On Write
+  for(i=0; i<USTACKTOP; i+=BY2PG) {
+    if(((*vpd)[i >> PDSHIFT]) && ((*vpt)[i >> PGSHIFT])) {
+      duppage(newenvid, VPN(i));
     }
   }
 
-  if(syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R) < 0) {
-    writef("Error at fork.c/fork. syscall_mem_alloc for Son_env failed.\n");
-    return -1;
-  }
-
-  if(syscall_set_pgfault_handler(newenvid, __asm_pgfault_handler, UXSTACKTOP) < 0) {
-    writef("Error at fork.c/fork. syscall_set_pgfault_handler for Son_env failed.\n");
-    return -1;
-  }
+  // I don't know why it doesn't work successfully
+  // for(i=0; i<VPN(USTACKTOP); ++i) {
+  //   if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
+  //     duppage(newenvid, i);
+  //   }
+  // }
   
-  syscall_set_env_status(newenvid, ENV_RUNNABLE);
-  
+  if((r = syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_pgfault_handler(newenvid,__asm_pgfault_handler, UXSTACKTOP)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_env_status(newenvid, ENV_RUNNABLE)) < 0) {
+    return r; // [bug] `return r` is important, return other `E_` prefix value will cause error
+  }
   return newenvid;
 }
 ```
+
+## Debug
+使用 `ENV_CREATE(user_fktest);` （仅截取一部分）:
+```bash
+$ gxemul -E testmips -C R3000 -M 64 gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.224.14
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c:	main is start ...
+
+init.c:	mips_init() is called
+
+Physical memory: 65536K available, base = 65536K, extended = 0K
+
+to memory 80401000 for struct page directory.
+
+to memory 80431000 for struct Pages.
+
+pmap.c:	 mips vm init success
+
+pageout:	@@@___0x7f3fe000___@@@  ins a page 
+
+pageout:	@@@___0x407000___@@@  ins a page 
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+this is father: a:1
+
+2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+		this is child2 :a:3
+
+2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:2
+
+	this is child :a:this is father: a:1
+
+this is father: a:1
+```
+
+使用 `ENV_CREATE(user_pingpong);`:
+```bash
+$ gxemul -E testmips -C R3000 -M 64 gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.224.14
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c: main is start ...
+
+init.c: mips_init() is called
+
+Physical memory: 65536K available, base = 65536K, extended = 0K
+
+to memory 80401000 for struct page directory.
+
+to memory 80431000 for struct Pages.
+
+pmap.c:  mips vm init success
+
+pageout:        @@@___0x7f3fe000___@@@  ins a page 
+
+pageout:        @@@___0x407000___@@@  ins a page 
+
+
+
+@@@@@send 0 from 800 to 1001
+
+1001 am waiting.....
+
+800 am waiting.....
+
+1001 got 0 from 800
+
+
+
+@@@@@send 1 from 1001 to 800
+
+1001 am waiting.....
+
+1001 got 0 from 800
+
+
+
+@@@@@send 1 from 1001 to 800
+
+800 got 1 from 1001
+
+
+
+@@@@@send 2 from 800 to 1001
+
+800 am waiting.....
+
+1001 am waiting.....
+
+1001 got 2 from 800
+
+
+
+@@@@@send 3 from 1001 to 800
+
+800 got 1 from 1001
+
+
+
+@@@@@send 2 from 800 to 1001
+
+800 am waiting.....
+
+800 got 1 from 1001
+
+
+
+@@@@@send 2 from 800 to 1001
+
+1001 am waiting.....
+
+1001 got 2 from 800
+
+
+
+@@@@@send 3 from 1001 to 800
+
+800 am waiting.....
+
+800 got 3 from 1001
+
+
+
+@@@@@send 4 from 800 to 1001 am waiting.....
+
+1001 got 2 from 800
+
+
+
+@@@@@send 3 from 1001 to 800
+
+1001
+
+800 am waiting.....
+
+1001 am waiting.....
+
+1001 got 4 from 800
+
+
+
+@@@@@send 5 from 1001 to 800
+
+800 got 3 from 1001
+
+
+
+@@@@@send 4 from 800 to 1001
+
+800 am waiting.....
+
+800 got 3 from 1001
+
+
+
+@@@@@send 4 from 800 to 1001
+
+1001 am waiting.....
+
+1800 am waiting.....
+
+800 got 5 from 1001
+
+
+
+@@@@@send 6 from 800 to 1001
+
+001 got 4 from 800
+
+
+
+@@@@@send 5 from 1001 to 800
+
+1001 am waiting.....
+
+1001 got 4 from 800
+
+
+
+@@@@@send 5 from 1001 to 800
+
+800 am waiting.....
+
+800 got 5 from 1001
+
+
+
+@@@@@send 6 from 800 to 1001
+
+1001 am waiting.....
+
+800 am waiting.....
+
+800 got 5 from 1001
+
+
+
+@@@@@send 6 from 800 to 1001
+
+1001 got 6 from 800
+
+
+
+@@@@@send 7 from 1001 to 800
+
+1001 am waiting.....
+
+1001 got 6 from 800
+800 am waiting.....
+
+800 got 7 from 1001
+
+
+
+@@@@@send 8 from 800 to 1001
+
+
+
+
+@@@@@send 7 from 1001 to 800
+
+1001 am waiting.....
+
+1001 got 6 from 800
+
+
+
+@@@@@send 7 from 1001 to 800
+
+800 am waiting.....
+
+800 got 7 from 1001
+
+
+
+@@@@@s1001 am waiting.....
+
+1001 got 8 from 800
+
+
+
+@@@@@send 9 from 1001 to 800
+
+end 8 from 800 to 1001
+
+800 am waiting.....
+
+800 got 7 from 1001
+
+
+
+@@@@@send 8 from 800 to 1001
+
+1001 am waiting.....
+
+1001 got 8 from 800
+
+
+
+@@@@@send 9 from 1001 to 800
+
+800 am waiting.....
+
+800 got 9 from 1001
+
+
+
+@@@@@send 10 from 800 to 1001
+
+1001 am waiting.....
+
+[08x] destroying 08x
+
+[08x] free env 08x
+
+i am killed ... 
+
+1001 got 10 from 800
+
+[08x] destroying 08x
+
+[08x] free env 08x
+
+i am killed ... 
+
+panic at sched.c:28: No env is RUNNABLE!
+```
+
+在调试过程中遇到了很多问题，修改了很多代码才让程序跑起来，其中最容易遇到的问题就是在 `syscall.S` 中忘记把 `sp` 归位的问题，然后程序跑飞的问题了，调了一个晚上，实际上只需加这么一行:
+
+```S
+# Resume current kernel stack
+addiu sp, sp, 24
+```
+
+还有一堆问题，甚至牵扯到了以前实验的 `lib/env.c` 和 `mm/pmap.c` 中的问题，在此不过多阐述。
+
+另外还遇到了比较奇怪的问题，比如 `user/fock.c` 中有一个写时复制的实现，使用:
+```c++
+// Copy On Write
+for(i=0; i<USTACKTOP; i+=BY2PG) {
+	if(((*vpd)[i >> PDSHIFT]) && ((*vpt)[i >> PGSHIFT])) {
+		duppage(newenvid, VPN(i));
+	}
+}
+```
+但是我在debug前写的是下面这样，我不知道为什么这样不能正常运行:
+```c++
+// I don't know why it doesn't work successfully
+for(i=0; i<VPN(USTACKTOP); ++i) {
+  if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
+    duppage(newenvid, i);
+  }
+}
+```
+
+即便已经能跑起来测试的两个程序，实验也可能还存在着些许问题。
+
+### 上传提交代码
+```bash
+git add .
+git commit -m "Finish lab4"
+git push
+```
+得到以下内容:
+```
+remote: [ Congratulations! You have passed the current lab. ]
+```
+![result](assets/result.png)

@@ -181,14 +181,13 @@ int sys_mem_map(int sysno, u_int srcid, u_int srcva, u_int dstid, u_int dstva,
 	round_srcva = ROUNDDOWN(srcva, BY2PG);
 	round_dstva = ROUNDDOWN(dstva, BY2PG);
 
-  //your code here
-	if(round_srcva >= UTOP || round_srcva < 0 || round_dstva >= UTOP || round_dstva < 0) return -E_UNSPECIFIED;
-	if(!(perm & PTE_V)) return -E_INVAL;
-	if((ret = envid2env(srcid, &srcenv, 0)) < 0) return -E_BAD_ENV;
-	if((ret = envid2env(dstid, &dstenv, 0)) < 0) return -E_BAD_ENV;
-	if((ppage = page_lookup(srcenv->env_pgdir, round_srcva, &ppte)) == NULL) return -E_UNSPECIFIED;
-	if((perm & PTE_R) && !((*ppte) & PTE_R)) return -E_INVAL; // restriction that can't go from non-writable to writable
-	if((ret = page_insert(dstenv->env_pgdir, ppage, round_dstva, perm)) < 0) return -E_NO_MEM;
+	if((perm & PTE_V)== 0) return -E_INVAL;
+	if(srcva>=UTOP||dstva>=UTOP) return -E_INVAL;
+	if((ret = envid2env(srcid, &srcenv, 0)) < 0) return ret;
+	if((ret = envid2env(dstid, &dstenv, 0)) < 0) return ret;
+	if((ppage = page_lookup(srcenv->env_pgdir, round_srcva, &ppte)) == NULL) return -E_INVAL;
+	if(ppte != NULL && (perm & PTE_R) == 1 && ((*ppte) & PTE_R) == 0) return -E_INVAL;
+	ret = page_insert(dstenv->env_pgdir, ppage, round_dstva, perm);
 	return ret;
 }
 
@@ -235,7 +234,7 @@ int sys_env_alloc(void)
 		return r;
 	}
 	bcopy((void *)(KERNEL_SP - sizeof(struct Trapframe)), (void *)&(e->env_tf), sizeof(struct Trapframe));
-	e->env_tf = curenv->env_tf; 			// Trapframe copy
+	// e->env_tf = curenv->env_tf; 			// Trapframe copy [bug, i don't know why]
 	e->env_tf.pc = e->env_tf.cp0_epc; // Set program counter
 	e->env_status = ENV_NOT_RUNNABLE; // Set process status
 	e->env_pri = curenv->env_pri;			// Set priority
@@ -262,12 +261,18 @@ int sys_set_env_status(int sysno, u_int envid, u_int status)
 	// Your code here.
 	struct Env *env;
 	int ret;
-	if(status > 2 || status < 0) return -E_INVAL;
-	if((ret = envid2env(envid, &env, 1)) < 0) return ret;
-	env->env_status = status;
-	if(status == ENV_RUNNABLE) {
-		LIST_INSERT_HEAD(env_sched_list, env, env_sched_link);
+	if(status != ENV_RUNNABLE && status != ENV_NOT_RUNNABLE && status != ENV_FREE) {
+		return -E_INVAL;
 	}
+
+	if((ret = envid2env(envid, &env, 0)) < 0) return ret;
+	
+	if(status == ENV_RUNNABLE && env->env_status != ENV_RUNNABLE) {
+		LIST_INSERT_TAIL(&env_sched_list[0], env, env_sched_link);
+	} else if (status != ENV_RUNNABLE && env->env_status == ENV_RUNNABLE) {
+		LIST_REMOVE(env, env_sched_link);
+	}
+	env->env_status = status;
 	return 0;
 	//	panic("sys_env_set_status not implemented");
 }
@@ -350,18 +355,33 @@ int sys_ipc_can_send(int sysno, u_int envid, u_int value, u_int srcva,
 	int r;
 	struct Env *e;
 	struct Page *p;
+	struct Pte *ppte;
+	
 	if(srcva >= UTOP || srcva < 0) return -E_INVAL;
 	if((r = envid2env(envid, &e, 0)) < 0) return -E_BAD_ENV;
 	if(e->env_ipc_recving != 1) return -E_IPC_NOT_RECV;
-	if(srcva != 0) {
-		e->env_ipc_perm = perm | PTE_V | PTE_R;
-		if((p = page_lookup(curenv->env_pgdir, srcva, 0)) <= 0) return -E_INVAL;
-		else if(page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm) < 0) return -E_INVAL;
-	}
+	// if(srcva != 0) {
+	// 	e->env_ipc_perm = perm | PTE_V | PTE_R;
+	// 	if((p = page_lookup(curenv->env_pgdir, srcva, 0)) <= 0) return -E_INVAL;
+	// 	else if(page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm) < 0) return -E_INVAL;
+	// }
 	e->env_ipc_from = curenv->env_id;
 	e->env_ipc_value = value;
 	e->env_ipc_perm = perm;
 	e->env_ipc_recving = 0;
 	e->env_status = ENV_RUNNABLE;
+	
+	if(srcva == 0) {
+		return 0;
+	}
+	
+	p = page_lookup(curenv->env_pgdir, srcva, &ppte);
+	if(p == 0) {
+		return -E_INVAL;
+	}
+	r = page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm);
+	if(r != 0) {
+		return r;
+	}
 	return 0;
 }

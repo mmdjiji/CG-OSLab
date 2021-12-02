@@ -1,0 +1,21 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+CC	include.mk	/^CC			  := $(CROSS_COMPILE)gcc$/;"	m
+CFLAGS	include.mk	/^CFLAGS		  := -O -G 0 -mno-abicalls -fno-builtin -Wa,-xgot -Wall -fPIC$/;"	m
+CROSS_COMPILE	include.mk	/^CROSS_COMPILE :=  \/OSLAB\/compiler\/usr\/bin\/mips_4KC-$/;"	m
+LD	include.mk	/^LD			  := $(CROSS_COMPILE)ld$/;"	m
+boot_dir	Makefile	/^boot_dir	  := boot$/;"	m
+drivers_dir	Makefile	/^drivers_dir	  := drivers$/;"	m
+init_dir	Makefile	/^init_dir	  := init$/;"	m
+lib_dir	Makefile	/^lib_dir		  := lib$/;"	m
+link_script	Makefile	/^link_script   := $(tools_dir)\/scse0_3.lds$/;"	m
+mm_dir	Makefile	/^mm_dir		  := mm$/;"	m
+modules	Makefile	/^modules		  := boot drivers init lib mm user$/;"	m
+objects	Makefile	/^objects		  := $(boot_dir)\/start.o			  \\$/;"	m
+tools_dir	Makefile	/^tools_dir	  := tools$/;"	m
+user_dir	Makefile	/^user_dir	  := user$/;"	m
+vmlinux_elf	Makefile	/^vmlinux_elf	  := gxemul\/vmlinux$/;"	m
