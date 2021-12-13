@@ -36,22 +36,28 @@ open(const char *path, int mode)
 
 	// Step 1: Alloc a new Fd, return error code when fail to alloc.
 	// Hint: Please use fd_alloc.
-
+	r = fd_alloc(&fd);
+	if(r < 0) return r;
 
 	// Step 2: Get the file descriptor of the file to open.
-
+	r = fsipc_open(path, mode, fd);
+	if(r < 0) return r;
 
 	// Step 3: Set the start address storing the file's content. Set size and fileid correctly.
 	// Hint: Use fd2data to get the start address.
-
+	ffd = fd;
+	fileid = ffd->f_fileid;
+	size = ffd->f_file.f_size;
+	va = fd2data(fd);
 
 	// Step 4: Map the file content into memory.
-
+	for(i = 0; i < size; i += BY2PG) {
+		fsipc_map(fileid, i, va + i);
+	}
 
 	// Step 5: Return file descriptor.
 	// Hint: Use fd2num.
-
-	
+	return fd2num(fd);
 }
 
 // Overview:
@@ -252,6 +258,7 @@ int
 remove(const char *path)
 {
 	// Your code here.
+	return fsipc_remove(path);
 }
 
 // Overview:

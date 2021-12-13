@@ -8,122 +8,104 @@
 /* ----------------- help functions ---------------- */
 
 /* Overview:
- * 	Copy `len` bytes from `src` to `dst`.
+ *   Copy `len` bytes from `src` to `dst`.
  *
  * Pre-Condition:
- * 	`src` and `dst` can't be NULL. Also, the `src` area 
- * 	 shouldn't overlap the `dest`, otherwise the behavior of this 
- * 	 function is undefined.
+ *   `src` and `dst` can't be NULL. Also, the `src` area 
+ *    shouldn't overlap the `dest`, otherwise the behavior of this 
+ *    function is undefined.
  */
 void user_bcopy(const void *src, void *dst, size_t len)
 {
-	void *max;
+  void *max;
 
-	//	writef("~~~~~~~~~~~~~~~~ src:%x dst:%x len:%x\n",(int)src,(int)dst,len);
-	max = dst + len;
+  //  writef("~~~~~~~~~~~~~~~~ src:%x dst:%x len:%x\n",(int)src,(int)dst,len);
+  max = dst + len;
 
-	// copy machine words while possible
-	if (((int)src % 4 == 0) && ((int)dst % 4 == 0)) {
-		while (dst + 3 < max) {
-			*(int *)dst = *(int *)src;
-			dst += 4;
-			src += 4;
-		}
-	}
+  // copy machine words while possible
+  if (((int)src % 4 == 0) && ((int)dst % 4 == 0)) {
+    while (dst + 3 < max) {
+      *(int *)dst = *(int *)src;
+      dst += 4;
+      src += 4;
+    }
+  }
 
-	// finish remaining 0-3 bytes
-	while (dst < max) {
-		*(char *)dst = *(char *)src;
-		dst += 1;
-		src += 1;
-	}
+  // finish remaining 0-3 bytes
+  while (dst < max) {
+    *(char *)dst = *(char *)src;
+    dst += 1;
+    src += 1;
+  }
 
-	//for(;;);
+  //for(;;);
 }
 
 /* Overview:
- * 	Sets the first n bytes of the block of memory 
+ *   Sets the first n bytes of the block of memory 
  * pointed by `v` to zero.
  * 
  * Pre-Condition:
- * 	`v` must be valid.
+ *   `v` must be valid.
  *
  * Post-Condition:
- * 	the content of the space(from `v` to `v`+ n) 
+ *   the content of the space(from `v` to `v`+ n) 
  * will be set to zero.
  */
 void user_bzero(void *v, u_int n)
 {
-	char *p;
-	int m;
+  char *p;
+  int m;
 
-	p = v;
-	m = n;
+  p = v;
+  m = n;
 
-	while (--m >= 0) {
-		*p++ = 0;
-	}
+  while (--m >= 0) {
+    *p++ = 0;
+  }
 }
 /*--------------------------------------------------------------*/
 
 /* Overview:
- * 	Custom page fault handler - if faulting page is copy-on-write,
+ *   Custom page fault handler - if faulting page is copy-on-write,
  * map in our own private writable copy.
  * 
  * Pre-Condition:
- * 	`va` is the address which leads to a TLBS exception.
+ *   `va` is the address which leads to a TLBS exception.
  *
  * Post-Condition:
  *  Launch a user_panic if `va` is not a copy-on-write page.
  * Otherwise, this handler should map a private writable copy of 
  * the faulting page at correct address.
  */
-/*** exercise 4.13 ***/
-static void
-pgfault(u_int va)
+static void pgfault(u_int va)
 {
-	u_int *tmp;
-	u_int ret;
-	u_int perm=(*vpt)[VPN(va)]&0xfff;
-//	writef("pgfault start\n");
-	if((perm&PTE_COW)==0){
-		user_panic("not a copy-on-write page\n");
-		return;
-	}
-	tmp=USTACKTOP;
-	u_int round_va=ROUNDDOWN(va,BY2PG);
-//	writef("start mem alloc\n");
-    ret=syscall_mem_alloc(0,tmp,PTE_V|PTE_R);
-//	writef("end mem alloc\n");
-	if(ret<0){
-		user_panic("alloc error\n");
-	}
-	
-	user_bcopy((void*)round_va,(void*)tmp, BY2PG);
-//	writef("start mem map\n");
-	ret=syscall_mem_map(0,tmp,0,round_va,PTE_V|PTE_R);
-	if(ret<0){
-		user_panic("map error\n");
-	}
-//	writef("start mem unmap\n");
-	ret=syscall_mem_unmap(0,tmp);
-	if(ret<0){
-		user_panic("unmap error\n");
-	}
-//	writef("fork.c:pgfault():\t va:%x\n",va);
-    
-    //map the new page at a temporary place
-
-	//copy the content
-	
-    //map the page on the appropriate place
-	
-    //unmap the temporary place
-	
+  u_int *tmp;
+  // writef("fork.c:pgfault():\t va:%x\n",va);
+  
+  // map the new page at a temporary place
+  tmp = UXSTACKTOP - 2 * BY2PG;
+  va = ROUNDDOWN(va, BY2PG);
+  if(!((*vpt)[VPN(va)] & PTE_COW)) {
+    user_panic("no COW\n");
+  }
+  if(syscall_mem_alloc(0, tmp, PTE_V | PTE_R)) {
+    user_panic("syscall_mem_alloc error!\n");
+  }
+  // copy the content
+  user_bcopy((void *)va, tmp, BY2PG);
+  // map the page on the appropriate place
+  if(syscall_mem_map(0, tmp, 0, va, PTE_V | PTE_R) != 0) {
+    user_panic("syscall_mem_map error!\n");
+  }
+  // unmap the temporary place
+  if(syscall_mem_unmap(0, tmp) != 0) {
+    user_panic("syscall_mem_unmap error!\n");
+  }
 }
 
 /* Overview:
- * 	Map our virtual page `pn` (address pn*BY2PG) into the target `envid`
+ *  Map our virtual page `pn` (address pn*BY2PG) into the target `envid`
  * at the same virtual address. 
  *
  * Post-Condition:
@@ -134,59 +116,30 @@ pgfault(u_int va)
  * copy-on-write.
  * 
  * Hint:
- * 	PTE_LIBRARY indicates that the page is shared between processes.
+ *  PTE_LIBRARY indicates that the page is shared between processes.
  * A page with PTE_LIBRARY may have PTE_R at the same time. You
  * should process it correctly.
  */
-/*** exercise 4.10 ***/
-static void
-duppage(u_int envid, u_int pn)
+static void duppage(u_int envid, u_int pn)
 {
-	u_int addr;
-	u_int perm;
-	u_int ret;
-	addr = pn*BY2PG;
-	perm = ((*vpt)[pn])&0xfff;
-	//writef("start duppage\n");
-	/*
-	if (!(perm & PTE_R) || (perm & PTE_LIBRARY)) {
-        if (syscall_mem_map(0, addr, envid, addr, perm) < 0)
-            user_panic("??? duppage failed");
-    } else {
-        if (syscall_mem_map(0, addr, envid, addr, perm | PTE_COW) < 0)
-            user_panic("??? duppage failed 2");
-        if ((perm & PTE_COW) == 0) {
-            if (syscall_mem_map(0, addr, 0, addr, perm | PTE_COW) < 0)
-                user_panic("??? duppage failed 3");
-        }
-    }*/
+  u_int addr;
+  u_int perm;
+  
+  addr = pn * BY2PG;
+  perm = (*vpt)[pn] & 0xfff;
+  if((perm & PTE_LIBRARY) || !(perm & PTE_R) || (perm&PTE_COW)) {// no change
+    syscall_mem_map(0, addr, envid, addr, perm);
+  } else {                                        // add COW         
+    perm |= PTE_COW;
+    syscall_mem_map(0, addr, envid, addr, perm);  // child process
+    syscall_mem_map(0, addr, 0, addr, perm);      // father process
+  }
 
-	if((perm&PTE_LIBRARY)||(perm&PTE_R)==0||(perm&PTE_COW)){
-//		writef("start map in duppage\n");
-		ret=syscall_mem_map(0,addr,envid,addr,perm);
-//		writef("end map in duppage\n");
-		if(ret<0){
-			user_panic("duppage error\n");
-		}
-	}else{
-//		writef("start map in duppage2\n");
-		ret=syscall_mem_map(0,addr,envid,addr,perm|PTE_COW);
-		if(ret<0){
-			user_panic("duppage error\n");
-		}
-//		writef("middle\n");
-		ret=syscall_mem_map(0,addr,0,addr,perm|PTE_COW);
-		if(ret<0){
-			user_panic("duppage error\n");
-		}
-//		writef("end\n");
-	}
-	//writef("duppage end\n");
-	//	user_panic("duppage not implemented");
+  // user_panic("duppage not implemented");
 }
 
 /* Overview:
- * 	User-level fork. Create a child and then copy our address space
+ *   User-level fork. Create a child and then copy our address space
  * and page fault handler setup to the child.
  *
  * Hint: use vpd, vpt, and duppage.
@@ -194,65 +147,57 @@ duppage(u_int envid, u_int pn)
  * Note: `set_pgfault_handler`(user/pgfault.c) is different from 
  *       `syscall_set_pgfault_handler`. 
  */
-/*** exercise 4.9 4.15***/
 extern void __asm_pgfault_handler(void);
-int
-fork(void)
+
+int fork(void)
 {
-	// Your code here.
-	u_int newenvid;
-	extern struct Env *envs;
-	extern struct Env *env;
-	u_int i,j;
-	u_int ret;
+  // Your code here.
+  u_int newenvid;
+  extern struct Env *envs;
+  extern struct Env *env;
+  u_int i;
+  u_int r;
 
-	//The parent installs pgfault using set_pgfault_handler
-	//alloc a new alloc
-	set_pgfault_handler(pgfault);
+  set_pgfault_handler(pgfault);
 
-	newenvid=syscall_env_alloc();
-	if(newenvid == 0){
-	//	writef("start son\n");
-		env = &envs[ENVX(syscall_getenvid())];
-	//	writef("son fork end\n");
-		return 0;
-	}
-		
-	for(i=0;i<USTACKTOP;i+=BY2PG){
-	//	writef("0x%x\n",i);
-		if((Pde*)(*vpd)[i>>PDSHIFT]){
-		//	writef("start duppage\n");
-			if((Pte*)(*vpt)[i>>PGSHIFT]){
-				duppage(newenvid,VPN(i));
-			}
-		}
-	}
-	
-	//	writef("duppage end\n");
-//	writef("start alloc in fork\n");
-	ret=syscall_mem_alloc(newenvid,UXSTACKTOP-BY2PG,PTE_V|PTE_R);
-//	writef("end alloc in fork\n");
-	if(ret<0) {
-		return ret;
-	}
-	ret=syscall_set_pgfault_handler(newenvid,__asm_pgfault_handler,UXSTACKTOP);
-//	writef("end pgdault\n");
-	if(ret<0) {
-		return ret;
-	}
-	ret=syscall_set_env_status(newenvid,ENV_RUNNABLE);
-//	writef("end status\n");
-	if(ret<0) {
-		return ret;
-	}
+  // u_int parent_id = syscall_getenvid(); // save the father process's id
 
-	return newenvid;
+  newenvid = syscall_env_alloc();
+  if(newenvid == 0) { // child process
+    env = envs + ENVX(syscall_getenvid());
+    // env->env_parent_id = parent_id; [bug]
+    return 0;
+  }
+
+  // Copy On Write
+  for(i=0; i<USTACKTOP; i+=BY2PG) {
+    if(((*vpd)[i >> PDSHIFT]) && ((*vpt)[i >> PGSHIFT])) {
+      duppage(newenvid, VPN(i));
+    }
+  }
+
+  // I don't know why it doesn't work successfully
+  // for(i=0; i<VPN(USTACKTOP); ++i) {
+  //   if(((*vpd)[i >> 10]) && ((*vpt)[i])) {
+  //     duppage(newenvid, i);
+  //   }
+  // }
+  
+  if((r = syscall_mem_alloc(newenvid, UXSTACKTOP - BY2PG, PTE_V | PTE_R)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_pgfault_handler(newenvid,__asm_pgfault_handler, UXSTACKTOP)) < 0) {
+    return r;
+  }
+  if((r = syscall_set_env_status(newenvid, ENV_RUNNABLE)) < 0) {
+    return r; // [bug] `return r` is important, return other `E_` prefix value will cause error
+  }
+  return newenvid;
 }
 
 // Challenge!
-int
-sfork(void)
+int sfork(void)
 {
-	user_panic("sfork not implemented");
-	return -E_INVAL;
+  user_panic("sfork not implemented");
+  return -E_INVAL;
 }

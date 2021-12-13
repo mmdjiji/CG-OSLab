@@ -130,7 +130,7 @@ void boot_map_segment(Pde *pgdir, u_long va, u_long size, u_long pa, int perm)
     for(i = 0; i < size; i += BY2PG) {
       va_temp = va + i;
       pgtable_entry = boot_pgdir_walk(pgdir, va_temp, 1);
-      *pgtable_entry = (pa + i) | perm;
+      *pgtable_entry = (pa + i) | perm | PTE_V; // PTE_V is important
     }
 }
 
@@ -282,24 +282,34 @@ pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte)
     Pde *pgdir_entryp;
     Pte *pgtable;
     struct Page *ppage;
+    int r;
 
     /* Step 1: Get the corresponding page directory entry and page table. */
-    pgdir_entryp = &pgdir[PDX(va)];
+    pgdir_entryp = pgdir + PDX(va);
+    pgtable = (Pte*)KADDR(PTE_ADDR(*pgdir_entryp));
 
     /* Step 2: If the corresponding page table is not exist(valid) and parameter `create`
      * is set, create one. And set the correct permission bits for this new page
      * table.
      * When creating new page table, maybe out of memory. */
-    if(!(*pgdir_entryp & PTE_V) && create == 1) {
-      if(page_alloc(&ppage) == -E_NO_MEM) return -E_NO_MEM;
-      *pgdir_entryp = page2pa(ppage) | PTE_V | PTE_R;
-      ppage->pp_ref = 1;
+    if((*pgdir_entryp & PTE_V) == 0) {
+      if(create == 1) {
+        if((r = page_alloc(&ppage)) == -E_NO_MEM) {
+          return -E_NO_MEM; // [bug] use `return r;` will cause error
+        }
+        ++ppage->pp_ref;
+        pgtable = page2kva(ppage);
+        *pgdir_entryp = PADDR(pgtable) | PTE_V;
+        *ppte = pgtable + PTX(va);
+        return 0;
+      } else {
+        *ppte = 0;
+        return 0;
+      }
     }
 
     /* Step 3: Set the page table entry to `*ppte` as return value. */
-    pgtable = (Pte*)KADDR(PTE_ADDR(*pgdir_entryp));
-    Pte *pgtable_entry = &pgtable[PTX(va)];
-    *ppte = pgtable_entry;
+    *ppte = pgtable + PTX(va);
 
     return 0;
 }
@@ -337,12 +347,11 @@ page_insert(Pde *pgdir, struct Page *pp, u_long va, u_int perm)
 
     /* Step 2: Update TLB. */
     /* hint: use tlb_invalidate function */
-    *pgtable_entry = 0;
     tlb_invalidate(pgdir, va);
 
     /* Step 3: Do check, re-get page table entry to validate the insertion. */
     /* Step 3.1 Check if the page can be insert, if can’t return -E_NO_MEM */
-    if (pgdir_walk(pgdir, va, 1, &pgtable_entry) != 0) {
+    if (pgdir_walk(pgdir, va, 1, &pgtable_entry) == -E_NO_MEM) {
       return -E_NO_MEM;
     }
     *pgtable_entry = page2pa(pp) | PERM;
@@ -411,9 +420,9 @@ page_remove(Pde *pgdir, u_long va)
     }
 
     /* Step 2: Decrease `pp_ref` and decide if it's necessary to free this page. */
+    ppage->pp_ref--;
 
     /* Hint: When there's no virtual address mapped to this page, release it. */
-    ppage->pp_ref--;
     if (ppage->pp_ref == 0) {
         page_free(ppage);
     }
@@ -647,7 +656,6 @@ void pageout(int va, int context)
 {
     u_long r;
     struct Page *p = NULL;
-    printf(";;;%x;;;", va);
 
     if (context < 0x80000000) {
         panic("tlb refill and alloc error!");
