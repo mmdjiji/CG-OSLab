@@ -279,7 +279,7 @@ dir_lookup(struct File *dir, char *name, struct File **file)
 	struct File *f;
 
 	// Step 1: Calculate nblock: how many blocks this dir have.
-
+	nblock = dir->f_size / BY2BLK;
 	for (i = 0; i < nblock; ++i) {
 		// Step 2: Read the i'th block of the dir.
 		// Hint: Use file_get_block.
@@ -288,10 +288,11 @@ dir_lookup(struct File *dir, char *name, struct File **file)
 
 		// Step 3: Find target file by file name in all files on this block.
 		// If we find the target file, set the result to *file and set f_dir field.
-		f = blk;
+		f = (struct File *)blk;
 		for (j = 0; j < FILE2BLK; ++j) {
 			if (strcmp(f[j].f_name, name) == 0) {
 				*file = f + j;
+				f[j].f_dir = dir;
 				return 0;
 			}
 		}
@@ -510,7 +511,113 @@ serve_remove(u_int envid, struct Fsreq_remove *rq)
 $ sudo apt-get install gcc-4.8-multilib
 ```
 
+而且还有坑，需要手动往 `lib/syscall.S` 中追加才能正常运行，否则 `va` 就变成 `0` 报超限:
+```S
+.word sys_write_dev
+.word sys_read_dev
+```
 
+测试:
 ```bash
 $ gxemul -E testmips -C R3000 -M 64 -d gxemul/fs.img gxemul/vmlinux
+GXemul 0.4.6    Copyright (C) 2003-2007  Anders Gavare
+Read the source code and/or documentation for other Copyright messages.
+
+Simple setup...
+    net: simulating 10.0.0.0/8 (max outgoing: TCP=100, UDP=100)
+        simulated gateway: 10.0.0.254 (60:50:40:30:20:10)
+            using nameserver 192.168.224.14
+    machine "default":
+        memory: 64 MB
+        cpu0: R3000 (I+D = 4+4 KB)
+        machine: MIPS test machine
+        diskimage: gxemul/fs.img
+            IDE DISK id 0, read/write, 4 MB (8192 sectors)
+        loading gxemul/vmlinux
+        starting cpu0 at 0x80010000
+-------------------------------------------------------------------------------
+
+main.c: main is start ...
+
+init.c: mips_init() is called
+
+Physical memory: 65536K available, base = 65536K, extended = 0K
+
+to memory 80401000 for struct page directory.
+
+to memory 80431000 for struct Pages.
+
+pmap.c:  mips vm init success
+
+panic at init.c:33: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pageout:        @@@___0x7f3fe000___@@@  ins a page 
+
+pageout:        @@@___0x40d000___@@@  ins a page 
+
+FS is running
+
+FS can do I/O
+
+superblock is good
+
+diskno: 0
+
+diskno: 0
+
+read_bitmap is good
+
+diskno: 0
+
+alloc_block is good
+
+file_open is good
+
+file_get_block is good
+
+file_flush is good
+
+file_truncate is good
+
+diskno: 0
+
+file rewrite is good
+
+pageout:        @@@___0x7f3fe000___@@@  ins a page 
+
+pageout:        @@@___0x407000___@@@  ins a page 
+
+serve_open 00000800 ffff000 0x2
+
+open is good
+
+read is good
+
+diskno: 0
+
+serve_open 00000800 ffff000 0x0
+
+open again: OK
+
+read again: OK
+
+file rewrite is good
+
+serve_open 00000800 ffff000 0x0
+
+file remove: OK
 ```
+
+### 上传提交代码
+> 在提交前需要手动删除一下 `gxemul/fs.img` ，由于这个东西比较大， `git push` 的时候会出问题。
+
+```bash
+git add .
+git commit -m "Finish lab5"
+git push
+```
+得到以下内容:
+```
+remote: [ Congratulations! You have passed the current lab. ]
+```
+![result](assets/result.png)

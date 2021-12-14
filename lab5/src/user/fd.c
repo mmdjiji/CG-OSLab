@@ -23,12 +23,13 @@ int
 dev_lookup(int dev_id, struct Dev **dev)
 {
 	int i;
-
-	for (i = 0; devtab[i]; i++)
+	for (i = 0; devtab[i]; ++i) {
+		// writef("@@@___find device id: %d\n", devtab[i]->dev_id);
 		if (devtab[i]->dev_id == dev_id) {
 			*dev = devtab[i];
 			return 0;
 		}
+	}
 
 	writef("[%08x] unknown device type %d\n", env->env_id, dev_id);
 	return -E_INVAL;
@@ -197,9 +198,11 @@ read(int fdnum, void *buf, u_int n)
 	struct Fd *fd;
 
 	// Step 1: Get fd and dev.
-	if((r = fd_lookup(fdnum, &fd)) < 0 || (r = dev_lookup(fd->fd_dev_id, &dev)) < 0) {
-		return r;
-	}
+	r = fd_lookup(fdnum, &fd);
+	if(r < 0) return r;
+	
+	r = dev_lookup(fd->fd_dev_id, &dev);
+	if(r < 0) return r;
 
 	// Step 2: Check open mode.
 	if((fd->fd_omode & O_ACCMODE) == O_WRONLY) {
