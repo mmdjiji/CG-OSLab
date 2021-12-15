@@ -63,8 +63,9 @@ u_int sys_getenvid(void)
  */
 void sys_yield(void)
 {
-	//类似于env_destroy，保存kernel_sp中的Trapframe，随后执行sched_yield;
-	bcopy((void*)(KERNEL_SP-sizeof(struct Trapframe)),(void*)TIMESTACK-sizeof(struct Trapframe),sizeof(struct Trapframe));
+	struct Trapframe *src = (struct Trapframe *)(KERNEL_SP - sizeof(struct Trapframe));
+	struct Trapframe *dst = (struct Trapframe *)(TIMESTACK - sizeof(struct Trapframe));
+	bcopy((void*)src, (void*)dst, sizeof(struct Trapframe));
 	sched_yield();
 }
 
@@ -112,10 +113,10 @@ int sys_set_pgfault_handler(int sysno, u_int envid, u_int func, u_int xstacktop)
 {
 	// Your code here.
 	struct Env *env;
-	int ret = 0;
-	if ((ret = envid2env(envid,&env,0))!=0) return ret;
-	env->env_xstacktop = xstacktop;
+	int ret;
+	if((ret = envid2env(envid, &env, 1)) < 0) return ret;
 	env->env_pgfault_handler = func;
+	env->env_xstacktop = xstacktop;
 	return 0;
 	//	panic("sys_set_pgfault_handler not implemented");
 }
@@ -144,13 +145,12 @@ int sys_mem_alloc(int sysno, u_int envid, u_int va, u_int perm)
 	struct Page *ppage;
 	int ret;
 	ret = 0;
-	assert(va%BY2PG==0);
-	if ((perm & PTE_COW)==PTE_COW || va>=UTOP) return -E_INVAL;
-	if ((ret = envid2env(envid,&env,0))!=0) return ret;
-	if ((ret = page_alloc(&ppage))!=0) return ret;
-	if ((ret = page_insert(env->env_pgdir,ppage,va,perm))!=0) return ret;
-	ret = 0;
-	return ret;
+	if(va >= UTOP || va < 0) return -E_UNSPECIFIED;
+  if(!(perm & PTE_V) || (perm & PTE_COW)) return -E_INVAL;
+	if((ret = envid2env(envid, &env, 1)) < 0) return -E_BAD_ENV;
+	if((ret = page_alloc(&ppage)) < 0) return -E_NO_MEM;
+	if((ret = page_insert(env->env_pgdir, ppage, va, perm)) < 0) return -E_NO_MEM;
+	return 0;
 }
 
 /* Overview:
@@ -175,19 +175,19 @@ int sys_mem_map(int sysno, u_int srcid, u_int srcva, u_int dstid, u_int dstva,
 	struct Env *dstenv;
 	struct Page *ppage;
 	Pte *ppte;
-    //your code here
+
 	ppage = NULL;
 	ret = 0;
 	round_srcva = ROUNDDOWN(srcva, BY2PG);
 	round_dstva = ROUNDDOWN(dstva, BY2PG);
-	if ((perm & PTE_COW)!=0 || dstva>=UTOP) return -E_INVAL;
-	if ((ret = envid2env(srcid,&srcenv,0))!=0) return ret;
-	if ((ret = envid2env(dstid,&dstenv,0))!=0) return ret;
-	ppage = pa2page(va2pa(srcenv->env_pgdir,srcva));
-	//ppage = page_lookup(srcenv->env_pgdir,srcva,&ppte);//获取srcva映射的page
-	pgdir_walk(srcenv->env_pgdir,srcva,0,&ppte);//获取srcva对应的页表项
-	if (ppte!=NULL && ((*ppte)&PTE_R==0) && (perm&PTE_R!=0)) return -E_INVAL;//企图从不可写映射到可写,返回错误
-	if ((ret = page_insert(dstenv->env_pgdir,ppage,dstva,perm))!=0) return ret;
+
+	if((perm & PTE_V)== 0) return -E_INVAL;
+	if(srcva>=UTOP||dstva>=UTOP) return -E_INVAL;
+	if((ret = envid2env(srcid, &srcenv, 0)) < 0) return ret;
+	if((ret = envid2env(dstid, &dstenv, 0)) < 0) return ret;
+	if((ppage = page_lookup(srcenv->env_pgdir, round_srcva, &ppte)) == NULL) return -E_INVAL;
+	if(ppte != NULL && (perm & PTE_R) == 1 && ((*ppte) & PTE_R) == 0) return -E_INVAL;
+	ret = page_insert(dstenv->env_pgdir, ppage, round_dstva, perm);
 	return ret;
 }
 
@@ -203,11 +203,11 @@ int sys_mem_map(int sysno, u_int srcid, u_int srcva, u_int dstid, u_int dstva,
 int sys_mem_unmap(int sysno, u_int envid, u_int va)
 {
 	// Your code here.
-	int ret;
+	int ret = 0;
 	struct Env *env;
-	if (va>=UTOP) return -E_INVAL;
-	if ((ret = envid2env(envid,&env,0))!=0) return ret;
-	page_remove(env->env_pgdir,va);
+	if(va >= UTOP || va < 0) return -E_INVAL;
+	if((ret = envid2env(envid, &env, 0)) < 0) return -E_BAD_ENV;
+	page_remove(env->env_pgdir, va);
 	return ret;
 	//	panic("sys_mem_unmap not implemented");
 }
@@ -226,36 +226,22 @@ int sys_mem_unmap(int sysno, u_int envid, u_int va)
  */
 int sys_env_alloc(void)
 {
-	// Your code here.
 	int r;
 	struct Env *e;
-	Pte* ppte;
-	//以curenv->env_id作为父进程的id来创建一个子进程
-	bcopy((void*)KERNEL_SP-sizeof(struct Trapframe),&(curenv->env_tf),sizeof(struct Trapframe));
-	if ((r = env_alloc(&e,curenv->env_id))!=0) return r;
-	bcopy(&(curenv->env_tf),&(e->env_tf),sizeof(struct Trapframe));
-	u_long i;
-	for (i = UTEXT;i<UTOP-2*BY2PG;i=i+BY2PG) {
-		ppte=0;
-		pgdir_walk(curenv->env_pgdir,i,0,&ppte);
-		if (ppte) {
-			if ((*ppte & PTE_V)!=0) {
-				if ((*ppte & PTE_R)!=0) {
-					if (r=page_insert(curenv->env_pgdir,pa2page(PTE_ADDR(*ppte)),i,PTE_R|PTE_V|PTE_COW)) return r;
-					if (r= page_insert(e->env_pgdir,pa2page(PTE_ADDR(*ppte)),i,PTE_R|PTE_V|PTE_COW)) return r;
-				} else {
-					if (r=page_insert(e->env_pgdir,pa2page(PTE_ADDR(*ppte)),i,PTE_V)) return r;
-				}
-			}
-		}
-	}
 
-	e->env_status = ENV_NOT_RUNNABLE;
-	e->env_tf.pc = e->env_tf.cp0_epc;
-	e->env_tf.regs[2] = 0;//返回值寄存器设置为0
-	//printf("sys_env_alloc return enf_id:%d\n",e->env_id);
-		//panic("sys_env_alloc not implemented");
+	// Your code here.
+	if((r = env_alloc(&e, curenv->env_id)) < 0) { // Allocate struct Env to e
+		return r;
+	}
+	bcopy((void *)(KERNEL_SP - sizeof(struct Trapframe)), (void *)&(e->env_tf), sizeof(struct Trapframe));
+	// e->env_tf = curenv->env_tf; 			// Trapframe copy [bug, i don't know why]
+	e->env_tf.pc = e->env_tf.cp0_epc; // Set program counter
+	e->env_status = ENV_NOT_RUNNABLE; // Set process status
+	e->env_pri = curenv->env_pri;			// Set priority
+	e->env_tf.regs[2] = 0;						// Set return value of child process
+
 	return e->env_id;
+	//	panic("sys_env_alloc not implemented");
 }
 
 /* Overview:
@@ -275,9 +261,16 @@ int sys_set_env_status(int sysno, u_int envid, u_int status)
 	// Your code here.
 	struct Env *env;
 	int ret;
-	if(ret=(envid2env(envid,&env,0))) return ret;
-	if((status!=ENV_FREE)&&(status!=ENV_NOT_RUNNABLE)&&(status!=ENV_RUNNABLE)) {
+	if(status != ENV_RUNNABLE && status != ENV_NOT_RUNNABLE && status != ENV_FREE) {
 		return -E_INVAL;
+	}
+
+	if((ret = envid2env(envid, &env, 0)) < 0) return ret;
+	
+	if(status == ENV_RUNNABLE && env->env_status != ENV_RUNNABLE) {
+		LIST_INSERT_TAIL(&env_sched_list[0], env, env_sched_link);
+	} else if (status != ENV_RUNNABLE && env->env_status == ENV_RUNNABLE) {
+		LIST_REMOVE(env, env_sched_link);
 	}
 	env->env_status = status;
 	return 0;
@@ -298,12 +291,6 @@ int sys_set_env_status(int sysno, u_int envid, u_int status)
  */
 int sys_set_trapframe(int sysno, u_int envid, struct Trapframe *tf)
 {
-	struct Env *env;
-	int ret;
-	if(ret=envid2env(envid,&env,0)) {
-		return ret;
-	}
-	env->env_tf=*tf;
 
 	return 0;
 }
@@ -338,11 +325,9 @@ void sys_panic(int sysno, char *msg)
  */
 void sys_ipc_recv(int sysno, u_int dstva)
 {
-	if (dstva>=UTOP) {
-		return;
-	}
-	curenv->env_ipc_dstva = dstva;
+	if(dstva >= UTOP || dstva < 0) return;
 	curenv->env_ipc_recving = 1;
+	curenv->env_ipc_dstva = dstva;
 	curenv->env_status = ENV_NOT_RUNNABLE;
 	sys_yield();
 }
@@ -365,25 +350,41 @@ void sys_ipc_recv(int sysno, u_int dstva)
  * Hint: the only function you need to call is envid2env.
  */
 int sys_ipc_can_send(int sysno, u_int envid, u_int value, u_int srcva,
-					 u_int perm)
+					           u_int perm)
 {
-
 	int r;
 	struct Env *e;
 	struct Page *p;
-	if ((r = envid2env(envid,&e,0))!=0) return r;
-	if (e->env_ipc_recving!=1) return -E_IPC_NOT_RECV;
-	e->env_ipc_recving=0;
-	e->env_ipc_from=curenv->env_id;
-	e->env_ipc_value=value;
-	if (srcva!=0) {
-		if(r=sys_mem_map(sysno,curenv->env_id,srcva,envid,e->env_ipc_dstva,perm)) return r;
-		e->env_ipc_perm = perm;
+	struct Pte *ppte;
+	
+	if(srcva >= UTOP || srcva < 0) return -E_INVAL;
+	if((r = envid2env(envid, &e, 0)) < 0) return -E_BAD_ENV;
+	if(e->env_ipc_recving != 1) return -E_IPC_NOT_RECV;
+	// if(srcva != 0) {
+	// 	e->env_ipc_perm = perm | PTE_V | PTE_R;
+	// 	if((p = page_lookup(curenv->env_pgdir, srcva, 0)) <= 0) return -E_INVAL;
+	// 	else if(page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm) < 0) return -E_INVAL;
+	// }
+	e->env_ipc_from = curenv->env_id;
+	e->env_ipc_value = value;
+	e->env_ipc_perm = perm;
+	e->env_ipc_recving = 0;
+	e->env_status = ENV_RUNNABLE;
+	
+	if(srcva == 0) {
+		return 0;
 	}
-	e->env_status=ENV_RUNNABLE;
+	
+	p = page_lookup(curenv->env_pgdir, srcva, &ppte);
+	if(p == 0) {
+		return -E_INVAL;
+	}
+	r = page_insert(e->env_pgdir, p, e->env_ipc_dstva, perm);
+	if(r != 0) {
+		return r;
+	}
 	return 0;
 }
-
 
 /* Overview:
  * 	This function is used to write data to device, which is

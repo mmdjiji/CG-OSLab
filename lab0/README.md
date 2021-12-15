@@ -256,7 +256,7 @@ sed -n 1024p $1 >> $2
 cp src/* dst/ -r
 ```
 
-### 上传提交代码
+## EOF
 ```bash
 git add .
 git commit -m "Finish lab0"

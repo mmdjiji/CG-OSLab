@@ -60,6 +60,6 @@ void sched_yield(void)
         //printf("%x %d\n", cur, cur->env_status);
     }
     if(IsChange) ++cur->env_runs; //Lab6
-    -count;
+    --count;
     env_run(cur);
 }

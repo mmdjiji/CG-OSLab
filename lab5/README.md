@@ -608,7 +608,7 @@ serve_open 00000800 ffff000 0x0
 file remove: OK
 ```
 
-### 上传提交代码
+## EOF
 > 在提交前需要手动删除一下 `gxemul/fs.img` ，由于这个东西比较大， `git push` 的时候会出问题。
 
 ```bash

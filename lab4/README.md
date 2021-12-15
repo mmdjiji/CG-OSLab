@@ -945,7 +945,7 @@ for(i=0; i<VPN(USTACKTOP); ++i) {
 
 即便已经能跑起来测试的两个程序，实验也可能还存在着些许问题。
 
-### 上传提交代码
+## EOF
 ```bash
 git add .
 git commit -m "Finish lab4"

@@ -394,7 +394,7 @@ panic at init.c:24: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 GXemul> quit
 ```
 
-### 上传提交代码
+## EOF
 ```bash
 git add .
 git commit -m "Finish lab1"
